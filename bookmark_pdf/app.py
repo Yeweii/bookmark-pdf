@@ -75,6 +75,10 @@ class BookmarkApp(tk.Tk):
         self._progress_queue: queue.Queue = queue.Queue()
         self._fetch_queue: queue.Queue = queue.Queue()
 
+        # Mount retry state (persisted between initial attempt and out-of-range retry)
+        self._pending_pdf_path: Path | None = None
+        self._pending_out_path: Path | None = None
+
         # Build UI
         self._build_layout()
 
@@ -919,6 +923,10 @@ class BookmarkApp(tk.Tk):
         self._log_clear()
         self._log_append(f"开始挂载 → {out_path}")
 
+        # Persist paths for out-of-range retry
+        self._pending_pdf_path = pdf_path
+        self._pending_out_path = out_path
+
         thread = threading.Thread(
             target=self._mount_worker,
             args=(pdf_path, self._last_nodes, out_path),
@@ -950,7 +958,7 @@ class BookmarkApp(tk.Tk):
                 # TXT save failure shouldn't block the mount result
                 self._progress_queue.put(("done", out_path, None, str(e)))
         except PageOutOfRangeError as e:
-            self._progress_queue.put(("err", f"页码越界（行 {e.line_no}）: {e.page}，PDF 共 {e.page_count} 页"))
+            self._progress_queue.put(("out_of_range", e.page_count))
         except Exception as e:
             self._progress_queue.put(("err", f"{type(e).__name__}: {e}"))
 
@@ -989,8 +997,85 @@ class BookmarkApp(tk.Tk):
                     messagebox.showerror("挂载失败", err)
                     self._run_btn.config(state=tk.NORMAL)
                     return
+                elif kind == "out_of_range":
+                    # Ask user whether to mount only in-range bookmarks
+                    page_count = msg[1]
+                    self._run_btn.config(state=tk.NORMAL)
+                    self._progress["value"] = 0
+                    if messagebox.askyesno(
+                        "页码越界",
+                        f"部分书签页码超出 PDF 范围（PDF 共 {page_count} 页）。\n\n"
+                        f"是否只挂载页码范围内的书签？\n"
+                        f"（越界书签将被跳过）",
+                    ):
+                        # Filter to in-range nodes and retry
+                        filtered = self._filter_in_range_nodes(page_count)
+                        if filtered:
+                            self._log_clear()
+                            self._log_append(f"重试挂载（已过滤越界书签）")
+                            self._last_nodes = filtered
+                            self._set_text_content(to_indent_dot(filtered))
+                            self._refresh_preview(filtered)
+                            self._retry_mount()
+                        else:
+                            messagebox.showinfo("提示", "没有可挂载的书签")
+                    return
         except queue.Empty:
             pass
+        self.after(100, self._poll_progress)
+
+    def _filter_in_range_nodes(self, page_count: int) -> list[BookmarkNode]:
+        """Return a new tree with only bookmarks whose page falls within [1, page_count].
+
+        The user has already confirmed they want to skip out-of-range entries.
+        """
+        offset = self._page_offset.get()  # typically -1
+        # PDF index range: [0, page_count - 1]
+        # bookmark page + offset must be in that range
+        lo = 1 + offset       # = 0 for offset=-1
+        hi = page_count + offset  # = page_count - 1 for offset=-1
+
+        def walk(nodes: list[BookmarkNode]) -> list[BookmarkNode]:
+            result: list[BookmarkNode] = []
+            for node in nodes:
+                if node.page is None:
+                    # page=None (parse error) is always kept as-is
+                    result.append(
+                        BookmarkNode(node.title, None, node.line_no,
+                                    children=walk(node.children))
+                    )
+                elif lo <= node.page + offset <= hi:
+                    result.append(
+                        BookmarkNode(node.title, node.page, node.line_no,
+                                    children=walk(node.children))
+                    )
+                else:
+                    # out of range: keep children attached to parent level
+                    result.extend(walk(node.children))
+            return result
+
+        return walk(self._last_nodes)
+
+    def _retry_mount(self) -> None:
+        """Re-run mount with the already-filtered _last_nodes."""
+        pdf_path = self._pending_pdf_path
+        out_path = self._pending_out_path
+        if pdf_path is None or out_path is None:
+            return
+
+        if out_path.exists() and out_path == pdf_path:
+            if not messagebox.askyesno("确认", f"将覆盖原文件:\n{out_path}\n是否继续？"):
+                return
+
+        self._run_btn.config(state=tk.DISABLED)
+        self._progress["value"] = 0
+
+        thread = threading.Thread(
+            target=self._mount_worker,
+            args=(pdf_path, self._last_nodes, out_path),
+            daemon=True,
+        )
+        thread.start()
         self.after(100, self._poll_progress)
 
     # ------------------------------------------------------------------

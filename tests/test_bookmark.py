@@ -5,11 +5,11 @@ import pytest
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-from src.bookmark import (
+from bookmark_pdf.bookmark import (
     PageOutOfRangeError,
     mount_bookmarks,
 )
-from src.parser import BookmarkNode
+from bookmark_pdf.parser import BookmarkNode
 
 
 # ---------------------------------------------------------------------------

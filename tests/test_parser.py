@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from src.parser import BookmarkNode, ParseError, ParseRule, Parser
+from bookmark_pdf.parser import BookmarkNode, ParseError, ParseRule, Parser
 
 
 # ---------------------------------------------------------------------------

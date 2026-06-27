@@ -28,7 +28,7 @@ def main() -> int:
     if not check_dependencies():
         return 1
 
-    from src.app import BookmarkApp
+    from bookmark_pdf.app import BookmarkApp
 
     app = BookmarkApp()
     app.run()

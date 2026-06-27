@@ -8,8 +8,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Literal
 
-from src.bookmark import PageOutOfRangeError, mount_bookmarks
-from src.parser import (
+from bookmark_pdf.bookmark import PageOutOfRangeError, mount_bookmarks
+from bookmark_pdf.parser import (
     BookmarkNode,
     ParseError,
     ParseRule,
@@ -454,7 +454,7 @@ class BookmarkApp(tk.Tk):
 
 
 def main() -> int:
-    from src.__main__ import check_dependencies
+    from bookmark_pdf.__main__ import check_dependencies
     if not check_dependencies():
         return 1
     app = BookmarkApp()

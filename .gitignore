@@ -42,6 +42,11 @@ htmlcov/
 .tox/
 .cache
 
+# PyInstaller
+build/
+dist/
+*.spec.bak
+
 # Output
 *.pdf
 !tests/fixtures/*.pdf

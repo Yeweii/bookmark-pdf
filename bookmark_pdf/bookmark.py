@@ -6,7 +6,7 @@ from typing import Callable, Literal
 
 from pypdf import PdfReader, PdfWriter
 
-from src.parser import BookmarkNode
+from bookmark_pdf.parser import BookmarkNode
 
 
 class PageOutOfRangeError(Exception):

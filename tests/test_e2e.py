@@ -6,8 +6,8 @@ from pypdf import PdfReader
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-from src.bookmark import mount_bookmarks
-from src.parser import Parser
+from bookmark_pdf.bookmark import mount_bookmarks
+from bookmark_pdf.parser import Parser
 
 
 FIXTURES = Path(__file__).parent / "fixtures"

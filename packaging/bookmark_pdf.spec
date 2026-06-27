@@ -63,7 +63,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='BookmarkPDF.app',
-    icon=None,
+    icon='icon.icns',
     bundle_identifier='com.yeweii.bookmark-pdf',
     info_plist={
         'CFBundleName': 'BookmarkPDF',

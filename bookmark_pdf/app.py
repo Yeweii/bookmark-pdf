@@ -189,7 +189,9 @@ class BookmarkApp(tk.Tk):
         lbl = ttk.Label(header, text=title, font=("TkDefaultFont", 10, "bold"))
         lbl.pack(side=tk.LEFT)
 
-        # Content container (packed below header, hidden when collapsed)
+        # Content container — always packed, only its children are hidden/shown.
+        # Using gridForget (instead of pack_forget) on children avoids canvas
+        # window height changes → scrollregion stays accurate at all times.
         content = ttk.Frame(parent, padding=8)
         default_kwargs = {"fill": tk.X, "ipady": 4}
         default_kwargs.update(pack_kwargs)
@@ -200,17 +202,25 @@ class BookmarkApp(tk.Tk):
         return content
 
     def _toggle_section(self, section_id: str) -> None:
-        """Expand or collapse a section."""
+        """Expand or collapse a section by hiding/showing its child widgets.
+
+        grid_remove() hides the widget but remembers its grid parameters —
+        calling grid() later restores the exact layout without reconstruction.
+        The content Frame stays packed in the canvas so the scrollregion
+        stays accurate at all times.
+        """
         self._section_collapsed[section_id] = not self._section_collapsed[section_id]
         collapsed = self._section_collapsed[section_id]
         content: ttk.Frame = getattr(self, f"_content_{section_id}")
         btn: ttk.Button = getattr(self, f"_header_btn_{section_id}")
         btn.configure(text="▸" if collapsed else "▾")
-        if collapsed:
-            content.pack_forget()
-        else:
-            content.pack(**self._section_pack[section_id])
-        # Update scroll region after layout changes
+
+        for child in content.winfo_children():
+            if collapsed:
+                child.grid_remove()
+            else:
+                child.grid()
+        # Scrollregion may have changed (hidden children = smaller frame)
         self._canvas.after_idle(
             lambda: self._canvas.configure(
                 scrollregion=self._canvas.bbox(tk.ALL),

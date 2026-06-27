@@ -13,8 +13,8 @@ from PyInstaller.utils.hooks import collect_submodules
 block_cipher = None
 
 a = Analysis(
-    ['bookmark_pdf/__main__.py'],
-    pathex=[],
+    ['../bookmark_pdf/__main__.py'],
+    pathex=['..'],
     binaries=[],
     datas=[],
     hiddenimports=collect_submodules('pypdf'),

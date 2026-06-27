@@ -139,7 +139,10 @@ bookmark_pdf/
 │   ├── spec.md          # 规范文档
 │   └── tasks.md         # 任务清单
 ├── pyproject.toml       # 包配置
-├── bookmark_pdf.spec    # PyInstaller 配置
+├── packaging/           # 打包相关
+│   ├── bookmark_pdf.spec
+│   ├── build.sh
+│   └── README.md
 ├── README.md
 ├── LICENSE
 └── requirements*.txt
@@ -165,19 +168,24 @@ wc -l bookmark_pdf/*.py
 
 ### 打包为可执行文件
 
-```bash
-# 安装 PyInstaller
-pip install ".[build]"
+打包相关文件统一在 [`packaging/`](packaging/) 目录下：
 
-# 构建（macOS onedir 模式）
-pyinstaller --clean bookmark_pdf.spec
-
-# 产物位置
-ls dist/BookmarkPDF/
-./dist/BookmarkPDF/BookmarkPDF    # 直接运行
+```
+packaging/
+├── bookmark_pdf.spec    # PyInstaller 配置
+├── build.sh             # 一键构建脚本
+└── README.md            # 打包说明
 ```
 
-打包配置见 `bookmark_pdf.spec`，可按需调整 `excludes`、`hiddenimports`、`BUNDLE` 等。
+```bash
+# 一键构建（推荐）
+./packaging/build.sh
+
+# 清理后重建
+./packaging/build.sh --clean
+```
+
+产物位于 `dist/BookmarkPDF/`（根目录）。详见 [packaging/README.md](packaging/README.md)。
 
 ---
 

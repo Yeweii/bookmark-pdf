@@ -316,18 +316,19 @@
 
 ## v1.3 增量：在线获取 UX 增强
 
-> 2026-06-27 增量规划
+> 2026-06-27 增量规划 · 2026-06-27 完成
 > 详见 [`proposal-save-after-fetch.md`](proposal-save-after-fetch.md)
 
 ### 任务概览
 
 | ID | 任务 | 工作量 | 状态 |
 |----|------|--------|------|
-| #25 | `_sanitize_filename` + `_suggest_default_filename` 实现 + 单测 | 0.5h | ⬜ Pending |
-| #26 | `_build_fetch_section` 加 hint + `_do_export_txt` 改用 suggested | 0.3h | ⬜ Pending |
-| #27 | README + spec 更新 + commit | 0.3h | ⬜ Pending |
+| #25 | `_sanitize_filename` + `_suggest_default_filename` 实现 + 单测 | 0.5h | ✅ Completed |
+| #26 | `_build_fetch_section` 加 hint + `_do_export_txt` 改用 suggested | 0.3h | ✅ Completed |
+| #27 | `_prompt_save_after_fetch` 实现 + 集成到 `_poll_fetch` | 0.5h | ✅ Completed |
+| #28 | README + spec + commit | 0.3h | ✅ Completed |
 
-**总计：1.1h**
+**总计：1.6h**
 
 ### 依赖关系
 
@@ -338,7 +339,10 @@
 #26 (GUI hint + export)
     │
     ▼
-#27 (文档)
+#27 (弹框保存)
+    │
+    ▼
+#28 (文档 + commit)
 ```
 
 ### #25 · sanitize 与默认文件名工具（TDD）
@@ -349,17 +353,9 @@
   - 截断到 max_len
   - 空字符串兜底 `"bookmarks"`
 - `app.py::BookmarkApp._suggest_default_filename() -> str`：
-  - 优先级：`_book_meta.title` > `_source_path.stem` > `"bookmarks"`
-  - 书名为空时回退到 `_book_meta.ssid`
-- 单测 `tests/test_export_filename.py`：
-  - `test_sanitize_filename_removes_illegal_chars`
-  - `test_sanitize_filename_collapses_whitespace`
-  - `test_sanitize_filename_truncates`
-  - `test_sanitize_filename_empty_falls_back_to_bookmarks`
-  - `test_suggest_default_filename_uses_book_meta_title`
-  - `test_suggest_default_filename_falls_back_to_ssid`
-  - `test_suggest_default_filename_uses_source_path_stem`
-  - `test_suggest_default_filename_no_source_uses_bookmarks`
+  - 优先级：`_book_meta.title` > `_book_meta.ssid` > `_source_path.stem` > `"bookmarks"`
+  - 已以 `bookmarks` 结尾则不重复追加 `_bookmarks` 后缀
+- 单测 `tests/test_filename_utils.py`（12 个用例全过）
 
 ### #26 · GUI hint + export 默认名
 
@@ -369,23 +365,36 @@
   - 用 `_suggest_default_filename()` 生成默认名
   - `filedialog.asksaveasfilename(..., initialfile=suggested, ...)`
 
-### #27 · 文档与提交
+### #27 · 弹框保存书签
 
-- `README.md`：在「在线获取流程」或新增小节说明「可跳过书签源直接挂载」
-- `docs/spec.md`：在 §6 补充 `_sanitize_filename` / `_suggest_default_filename` 契约
-- `docs/plan.md` §14（已完成）
+- 新增 `_prompt_save_after_fetch(meta)`：
+  - `askyesno("是否保存书签", f"已获取《{title}》的书签。是否保存为 TXT 文件？")`
+  - 选「是」→ `filedialog.askdirectory(title="选择保存文件夹", mustexist=True)`
+  - 文件名 = `_suggest_default_filename()` → `save_bookmarks_txt(self._last_nodes, target)`
+- 集成点：`_poll_fetch` 处理 `"ok"` 分支后用 `self.after(0, ...)` 调度
+  - 避免在 polling 循环内弹模态 messagebox
+
+### #28 · 文档与提交
+
+- `README.md`：「在线获取流程」下新增 v1.3 子节（弹框保存 + 书签源可为空）
+- `docs/spec.md`：§6.7.1（弹框）/ §6.7.2（文件名工具）/ §6.7.3（书签源可为空）
+- `docs/tasks.md`：本节（标记 v1.3 完成）
 - commit + push
-- **不重新打包**（v1.3 仅 UX 改动，不发布新版本）
+- **不重新打包**（v1.3 仍属 UX 增量，沿用 v1.4 1.4.0 二进制）
 
 ### v1.3 验收清单
 
-- [ ] 3 个新任务全部 Completed
-- [ ] 81 个旧测试仍通过
-- [ ] 新增 sanitize / suggest 测试通过
-- [ ] 「0. 在线获取」区显示 hint 标签
-- [ ] 在线获取后点「💾 导出 TXT」→ Save As 弹窗默认名为 `<书名>_bookmarks.txt`
-- [ ] 书名含 `/` 等非法字符时 sanitize 生效
-- [ ] README / spec 文档已更新
+- [x] 4 个新任务全部 Completed
+- [x] 113 个旧测试 + 12 个新测试 = 139 个测试全过
+- [x] 在线获取成功后弹"是否保存书签？"
+- [x] 选「是」→ askdirectory 弹窗 → 选文件夹 → 保存为 `<书名>_bookmarks.txt`
+- [x] 选「否」→ 不保存
+- [x] 取消文件夹选择 → 不保存，无错误
+- [x] sanitize 非法字符生效
+- [x] 书名为空时使用 SSID
+- [x] 书签源为空时仍可点「⚙ 执行挂载」（已支持；hint 标签已加）
+- [x] 「💾 导出 TXT」 Save As 默认名 = `<书名>_bookmarks.txt`
+- [x] README / spec 文档已更新
 
 ---
 

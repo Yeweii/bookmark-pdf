@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -135,6 +136,11 @@ class BookmarkApp(tk.Tk):
             text="(从 api.pdfshuwu.com 拉取目录；成功后自动填入下方预览)",
             foreground="#888",
         ).grid(row=1, column=1, columnspan=3, sticky=tk.W, padx=4)
+        ttk.Label(
+            frame,
+            text="提示：获取后可点「⚙ 执行挂载」直接挂到 PDF，无需先选书签源文件。",
+            foreground="#888",
+        ).grid(row=2, column=1, columnspan=3, sticky=tk.W, padx=4)
 
         frame.columnconfigure(3, weight=1)
 
@@ -411,6 +417,10 @@ class BookmarkApp(tk.Tk):
                     f"{meta.total_pages or '?'} 页"
                 )
                 self._update_run_button()
+                # v1.3: ask the user whether to save the fetched bookmarks
+                # to a folder of their choosing. Run after() so the popup
+                # doesn't sit inside the polling loop.
+                self.after(0, lambda: self._prompt_save_after_fetch(meta))
                 return
             elif kind == "err":
                 err = msg[1]
@@ -422,6 +432,34 @@ class BookmarkApp(tk.Tk):
         except (queue.Empty, AttributeError):
             pass
         self.after(100, self._poll_fetch)
+
+    def _prompt_save_after_fetch(self, meta: BookMeta) -> None:
+        """After a successful online fetch, ask the user to save the bookmarks
+        to a folder of their choice. Skipped if the user declines or cancels.
+        """
+        if not self._last_nodes:
+            return
+        title_display = meta.title or meta.ssid
+        if not messagebox.askyesno(
+            "是否保存书签",
+            f"已获取《{title_display}》的书签。\n是否保存为 TXT 文件？",
+        ):
+            return
+
+        folder = filedialog.askdirectory(title="选择保存文件夹", mustexist=True)
+        if not folder:
+            return
+
+        filename = self._suggest_default_filename()
+        target = Path(folder) / filename
+        try:
+            save_bookmarks_txt(self._last_nodes, target)
+        except OSError as e:
+            messagebox.showerror("保存失败", str(e))
+            return
+        self._log_append(f"✓ 书签已保存: {target}")
+        self._set_status(f"已保存: {target.name}")
+        messagebox.showinfo("完成", f"书签已保存到:\n{target}")
 
     # ------------------------------------------------------------------
     # Parse
@@ -631,6 +669,7 @@ class BookmarkApp(tk.Tk):
             out = Path(filedialog.asksaveasfilename(
                 title="导出书签为 TXT",
                 defaultextension=".txt",
+                initialfile=self._suggest_default_filename(),
                 filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
             ))
             if not out:
@@ -932,6 +971,58 @@ class BookmarkApp(tk.Tk):
             subprocess.Popen(["explorer", str(folder)])
         else:
             subprocess.Popen(["xdg-open", str(folder)])
+
+    # ------------------------------------------------------------------
+    # Filename utilities (v1.3)
+    # ------------------------------------------------------------------
+
+    _ILLEGAL_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|\r\n\t]')
+    _WHITESPACE_RUN = re.compile(r"\s+")
+
+    @staticmethod
+    def _sanitize_filename(name: str, max_len: int = 80) -> str:
+        """Return a filesystem-safe name.
+
+        - Replaces OS-illegal characters with single spaces
+        - Collapses runs of whitespace
+        - Truncates to ``max_len`` characters (Unicode-aware by count)
+        - Falls back to ``"bookmarks"`` when the result would be empty
+        """
+        cleaned = BookmarkApp._ILLEGAL_FILENAME_CHARS.sub(" ", name or "")
+        cleaned = BookmarkApp._WHITESPACE_RUN.sub(" ", cleaned).strip()
+        if len(cleaned) > max_len:
+            cleaned = cleaned[:max_len].rstrip()
+        return cleaned or "bookmarks"
+
+    def _suggest_default_filename(self) -> str:
+        """Build a sensible default ``.txt`` filename for export/save.
+
+        Priority:
+        1. ``_book_meta.title`` (sanitized) — when fetched online
+        2. ``_book_meta.ssid`` — when title is empty
+        3. ``_source_path`` stem — when no book meta is available
+        4. ``"bookmarks"`` — final fallback
+
+        Appends ``_bookmarks`` unless the stem already ends with it
+        (case-insensitive), to avoid ``my_bookmarks_bookmarks.txt``.
+        """
+        base: str
+        if self._book_meta is not None:
+            title = (self._book_meta.title or "").strip()
+            if title:
+                base = title
+            else:
+                base = self._book_meta.ssid
+        else:
+            source = self._source_path.get().strip()
+            if source:
+                base = Path(source).stem
+            else:
+                base = "bookmarks"
+        sanitized = self._sanitize_filename(base)
+        if not sanitized.lower().endswith("bookmarks"):
+            sanitized += "_bookmarks"
+        return sanitized + ".txt"
 
 
 # ---------------------------------------------------------------------------

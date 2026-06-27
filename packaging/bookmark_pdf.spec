@@ -68,8 +68,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'BookmarkPDF',
         'CFBundleDisplayName': '书签挂载工具',
-        'CFBundleShortVersionString': '1.0.0',
-        'CFBundleVersion': '1.0.0',
+        'CFBundleShortVersionString': '1.1.0',
+        'CFBundleVersion': '1.1.0',
         'NSHighResolutionCapable': 'True',
         'LSMinimumSystemVersion': '10.13',
     },

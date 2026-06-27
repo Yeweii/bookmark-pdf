@@ -147,6 +147,75 @@
 - [ ] 单元测试通过：`pytest tests/` 全绿
 - [ ] 端到端跑通：真实 PDF + TXT/MD 各 1 例
 - [ ] 输出 PDF 在 Preview / Adobe Reader 中书签树正确显示
+
+---
+
+## v1.1 增量：在线书签获取 + 自动保存 TXT
+
+> 2026-06-27 增量规划
+
+### 任务概览
+
+| ID | 任务 | 工作量 | 状态 |
+|----|------|--------|------|
+| #18 | `fetcher.py` + 单测（mock HTTP） | 1.5h | ⬜ Pending |
+| #19 | `to_indent_dot` + `save_bookmarks_txt` + 单测 | 1h | ⬜ Pending |
+| #17 | GUI 新增「在线获取」区 + 挂载后自动保存 | 1.5h | ⬜ Pending |
+| #20 | 端到端 + README/spec 更新 + commit/push | 0.5h | ⬜ Pending |
+
+**总计：4.5h**
+
+### 依赖关系
+
+```
+[parser] ──┬──► #18 (fetcher.py)
+           │       │
+           └──► #19 (to_indent_dot)
+                   │
+                   └──► #17 (GUI 集成)
+                            │
+                            └──► #20 (E2E + 文档)
+```
+
+### #18 · 在线书签获取 fetcher.py（TDD）
+
+- `src/fetcher.py`：`BookMeta` / `FetchError` / `fetch_bookmarks(ssid) -> (BookMeta, list[BookmarkNode])`
+- 使用 `urllib.request`（零依赖）
+- 按 API `i` 字段直接建树（4 级：卷/节/小节/标题）
+- 单测：`unittest.mock` 模拟 HTTP 响应（成功 / 4xx / 超时 / 坏 JSON / 空目录）
+- 真实 API 测试 `@pytest.mark.skipif(no_network)` 跳过
+
+### #19 · 书签节点序列化 TXT（TDD）
+
+- `src/parser.py::to_indent_dot(nodes, *, indent_spaces=2) -> str`
+- `src/bookmark.py::save_bookmarks_txt(nodes, output_path) -> Path`
+- 单测：单层 / 多层 / Unicode / None page
+- **Round-trip**：`parse(to_indent_dot(parse(text))) == parse(text)`
+
+### #17 · GUI 新增「在线获取」区 + 挂载后自动保存
+
+- `src/app.py`：在主区顶部新增 section「0. 在线获取」
+  - SSID 输入框 + 「🌐 获取书签」按钮 + 状态标签
+  - 点击后后台线程调用 fetcher，结果填充预览
+- `_mount_worker` 成功后调用 `save_bookmarks_txt` 写 `<pdf>_bookmarks.txt`
+- 日志区追加「✓ 已保存书签文件：xxx」
+
+### #20 · fetcher 端到端与文档更新
+
+- `tests/test_fetcher.py`：1 个真实 API 调用测试（无网络 skip）
+- `docs/plan.md` §12 增量计划（已完成）
+- `README.md`：补充「在线获取」用法
+- `spec.md`：补充 fetcher / save_bookmarks_txt 接口契约
+- commit + push
+
+### v1.1 验收清单
+
+- [ ] 4 个新任务全部 Completed
+- [ ] 51 个旧测试仍通过
+- [ ] 新增 fetcher / serializer / save_bookmarks_txt 测试通过
+- [ ] GUI 输入 SSID 后预览填充
+- [ ] 挂载成功后同目录生成 `<pdf>_bookmarks.txt`
+- [ ] TXT 可被 `indent-dot` 模板重新解析（round-trip 验证）
 - [ ] README 含用法、解析规则示例、常见问题
 - [ ] 无 `pypdf` 之外的运行依赖
 - [ ] GUI 启动 < 1s，解析 1000 行 < 100ms

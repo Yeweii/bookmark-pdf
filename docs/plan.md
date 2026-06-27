@@ -2,6 +2,135 @@
 
 > 最后更新：2026-06-27
 
+## 历史版本
+
+- v1.0：核心解析 + 挂载 + GUI（[§1-11](#1-目标)）
+- **v1.1（当前增量）：在线书签获取接口 + 自动保存 TXT** — 见 [§12](#12-增量-v11在线书签获取--自动保存-txt)
+
+---
+
+## 12. 增量 v1.1：在线书签获取 + 自动保存 TXT
+
+### 12.1 目标
+
+在现有 `bookmark_pdf` 工具中新增：
+
+1. **在线书签获取**：从 `api.pdfshuwu.com` 按 `ssid` 拉取目录结构并填充到预览区
+2. **挂载后自动保存 TXT**：执行挂载成功后，把当前书签树以 `indent-dot` 格式写入 `<pdf>_bookmarks.txt`
+
+### 12.2 已确认决策
+
+| 项 | 选择 |
+|----|------|
+| API URL | `https://api.pdfshuwu.com/api/front/duxiu/info?ssid={ssid}` |
+| 输入参数 | `ssid`（字符串） |
+| 层级映射 | API 返回的 `i` 字段直接作为层级（0=顶层，1-3=嵌套） |
+| TXT 保存 | 每次挂载成功后自动保存，与 PDF 同目录，文件名 `<原名>_bookmarks.txt` |
+| GUI 集成 | 主区域顶部新增「在线获取」区（SSID 输入 + 按钮 + loading 状态） |
+
+### 12.3 API 响应结构（已实测）
+
+```json
+{
+  "code": "200",
+  "message": "成功",
+  "data": {
+    "dxSsid": "13284383",
+    "dxTitle": "国朝闺秀诗柳絮集校补  1",
+    "dxAuthor": "（清）黄秩模编辑；付琼校补",
+    "dxPage": "410",
+    "dxDirectory": [
+      { "p": 1, "c": "前言&付琼", "i": 0 },
+      { "p": 1, "c": "卷一", "i": 0 },
+      { "p": 1, "c": "一东", "i": 1 },
+      { "p": 1, "c": "童凤  四首", "i": 2 },
+      { "p": 3, "c": "寒食舟中感怀", "i": 3 }
+    ]
+  }
+}
+```
+
+### 12.4 模块设计
+
+**新增 `src/fetcher.py`**：
+```python
+@dataclass
+class BookMeta:
+    ssid: str; dxid: str; isbn: str
+    title: str; author: str; publish: str
+    publish_time: str; total_pages: int | None
+
+class FetchError(Exception): ...
+
+def fetch_bookmarks(ssid, *, api_url=..., timeout=30.0) -> tuple[BookMeta, list[BookmarkNode]]:
+    """拉取书目元数据 + 目录树。
+    
+    使用 urllib.request 零依赖，按 i 字段建树（复用 parser 的 _build_tree 思路）。
+    """
+```
+
+**`src/parser.py` 新增序列化函数**：
+```python
+def to_indent_dot(nodes: list[BookmarkNode], *, indent_spaces: int = 2) -> str:
+    """序列化为 indent-dot 格式文本。"""
+```
+
+**`src/bookmark.py` 新增保存函数**：
+```python
+def save_bookmarks_txt(nodes, output_path, *, indent_spaces=2) -> Path:
+    """保存为 TXT，返回写入路径。"""
+```
+
+**GUI 改造 (`src/app.py`)**：
+- 顶部新增 section「0. 在线获取」（SSID 输入 + 按钮 + 状态）
+- `_mount_worker` 成功后调用 `save_bookmarks_txt` 写 `<pdf>_bookmarks.txt`
+- 日志追加「✓ 已保存书签文件」
+
+### 12.5 错误处理
+
+| 场景 | 处理 |
+|------|------|
+| 网络失败 | `FetchError` + GUI 弹窗 + 状态栏 |
+| 非 200 响应 | `FetchError` + 显示 API message |
+| 空目录 | `FetchError` + 「该 SSID 无目录数据」 |
+| 空 SSID | GUI 层校验禁止提交 |
+| TXT 写入失败 | 日志提示，不阻断挂载结果 |
+
+### 12.6 测试策略
+
+- **`test_fetcher.py`**：用 `unittest.mock` 模拟 HTTP（避免网络依赖）
+  - 成功 / HTTP 错误 / 超时 / JSON 失败 / 空目录
+- **`test_parser.py` 新增**：to_indent_dot、round-trip
+- **`test_bookmark.py` 新增**：save_bookmarks_txt 写入验证
+
+### 12.7 执行任务（v1.1 增量）
+
+| ID | 任务 | 工作量 | 依赖 |
+|----|------|--------|------|
+| #18 | `fetcher.py` + 单测（mock HTTP） | 1.5h | parser |
+| #19 | `to_indent_dot` + `save_bookmarks_txt` + 单测 | 1h | parser |
+| #17 | GUI 新增「在线获取」区 + 挂载后自动保存 | 1.5h | #18, #19 |
+| #20 | 端到端 + README/spec 更新 + commit/push | 0.5h | #17 |
+
+**v1.1 总计：约 4.5h**
+
+### 12.8 验收标准
+
+- [ ] 合法 SSID 填充预览区
+- [ ] API 异常不崩溃，友好提示
+- [ ] 挂载成功自动生成 `<pdf>_bookmarks.txt`
+- [ ] TXT 可被 `indent-dot` 重新解析（round-trip）
+- [ ] 51 个旧测试全部通过
+- [ ] 新增 fetcher / serializer 测试通过
+
+### 12.9 风险
+
+1. **API 变更**：第三方 API 可能改格式 → 错误信息含原始响应便于排查
+2. **网络超时**：默认 30s + 后台线程不卡顿
+3. **依赖**：复用 `urllib`，零新增依赖
+
+---
+
 ## 1. 目标
 
 将 **TXT** 或 **MD（Markdown）** 格式的书签文件解析为层级树，并挂载到 PDF 的 outline（书签）中，生成可跳转的导航。

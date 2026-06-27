@@ -201,3 +201,43 @@ class Parser:
                 roots.append(node)
             stack.append((depth, node))
         return roots
+
+
+# ---------------------------------------------------------------------------
+# Serializer (tree → indent-dot TXT)
+# ---------------------------------------------------------------------------
+
+
+def to_indent_dot(
+    nodes: list[BookmarkNode],
+    *,
+    indent_spaces: int = 2,
+) -> str:
+    """Serialize a bookmark tree into indent-dot format text.
+
+    Output format:
+        TopTitle ...... 1
+          ChildTitle ...... 2
+            Grandchild ...... 3
+
+    Pages with ``page is None`` are rendered as ``?``.
+
+    Args:
+        nodes: Top-level bookmark nodes.
+        indent_spaces: Number of spaces per nesting level.
+
+    Returns:
+        The serialized text (no trailing newline).
+    """
+    lines: list[str] = []
+
+    def render(node: BookmarkNode, depth: int) -> None:
+        prefix = " " * (indent_spaces * depth)
+        page_str = str(node.page) if node.page is not None else "?"
+        lines.append(f"{prefix}{node.title} ...... {page_str}")
+        for child in node.children:
+            render(child, depth + 1)
+
+    for root in nodes:
+        render(root, 0)
+    return "\n".join(lines)

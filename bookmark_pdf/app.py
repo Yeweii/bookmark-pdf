@@ -8,7 +8,17 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Literal
 
-from bookmark_pdf.bookmark import PageOutOfRangeError, mount_bookmarks
+from bookmark_pdf.bookmark import (
+    PageOutOfRangeError,
+    default_txt_path_for,
+    mount_bookmarks,
+    save_bookmarks_txt,
+)
+from bookmark_pdf.fetcher import (
+    BookMeta,
+    FetchError,
+    fetch_bookmarks,
+)
 from bookmark_pdf.parser import (
     BookmarkNode,
     ParseError,
@@ -23,11 +33,14 @@ class BookmarkApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("书签挂载工具")
-        self.geometry("920x720")
-        self.minsize(720, 600)
+        self.geometry("920x780")
+        self.minsize(720, 620)
 
         # State
         self._source_path = tk.StringVar()
+        self._ssid_var = tk.StringVar()
+        self._fetch_status = tk.StringVar(value="")
+        self._book_meta: BookMeta | None = None
         self._pdf_path = tk.StringVar()
         self._rule_name = tk.StringVar(value="flat")
         self._custom_regex = tk.StringVar()
@@ -42,6 +55,7 @@ class BookmarkApp(tk.Tk):
 
         # Thread communication
         self._progress_queue: queue.Queue = queue.Queue()
+        self._fetch_queue: queue.Queue = queue.Queue()
 
         # Build UI
         self._build_layout()
@@ -61,6 +75,9 @@ class BookmarkApp(tk.Tk):
         outer = ttk.Frame(self, padding=8)
         outer.pack(fill=tk.BOTH, expand=True)
 
+        self._build_fetch_section(outer)
+        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+
         self._build_file_section(outer)
         ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
 
@@ -74,6 +91,32 @@ class BookmarkApp(tk.Tk):
         ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
 
         self._build_progress_section(outer)
+
+    def _build_fetch_section(self, parent: ttk.Frame) -> None:
+        frame = ttk.LabelFrame(parent, text="0. 在线获取（可选）", padding=8)
+        frame.pack(fill=tk.X)
+
+        ttk.Label(frame, text="SSID:").grid(row=0, column=0, sticky=tk.W, padx=4, pady=2)
+        self._ssid_entry = ttk.Entry(frame, textvariable=self._ssid_var, width=24)
+        self._ssid_entry.grid(row=0, column=1, sticky=tk.W, padx=4)
+
+        self._fetch_btn = ttk.Button(
+            frame, text="🌐 获取书签", command=self._do_fetch
+        )
+        self._fetch_btn.grid(row=0, column=2, padx=4)
+
+        self._fetch_status_label = ttk.Label(
+            frame, textvariable=self._fetch_status, foreground="#666",
+        )
+        self._fetch_status_label.grid(row=0, column=3, sticky=tk.W, padx=8)
+
+        ttk.Label(
+            frame,
+            text="(从 api.pdfshuwu.com 拉取目录；成功后自动填入下方预览)",
+            foreground="#888",
+        ).grid(row=1, column=1, columnspan=3, sticky=tk.W, padx=4)
+
+        frame.columnconfigure(3, weight=1)
 
     def _build_file_section(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="1. 选择文件", padding=8)
@@ -241,6 +284,64 @@ class BookmarkApp(tk.Tk):
             self._pdf_path.set(path)
 
     # ------------------------------------------------------------------
+    # Online fetch
+    # ------------------------------------------------------------------
+
+    def _do_fetch(self) -> None:
+        ssid = self._ssid_var.get().strip()
+        if not ssid:
+            messagebox.showwarning("提示", "请输入 SSID")
+            return
+
+        self._fetch_btn.config(state=tk.DISABLED)
+        self._fetch_status.set("正在获取…")
+        self._log_clear()
+        self._log_append(f"→ 正在从 API 获取 SSID={ssid} 的目录…")
+
+        thread = threading.Thread(
+            target=self._fetch_worker, args=(ssid,), daemon=True,
+        )
+        thread.start()
+        self.after(100, self._poll_fetch)
+
+    def _fetch_worker(self, ssid: str) -> None:
+        try:
+            meta, nodes = fetch_bookmarks(ssid)
+            self._fetch_queue.put(("ok", meta, nodes))
+        except FetchError as e:
+            self._fetch_queue.put(("err", str(e)))
+        except Exception as e:
+            self._fetch_queue.put(("err", f"{type(e).__name__}: {e}"))
+
+    def _poll_fetch(self) -> None:
+        try:
+            msg = self._fetch_queue.get_nowait()
+            kind = msg[0]
+            if kind == "ok":
+                _, meta, nodes = msg
+                self._book_meta = meta
+                self._last_nodes = nodes
+                self._fetch_status.set(f"✓ {meta.title}（{len(nodes)} 顶层节点）")
+                self._fetch_btn.config(state=tk.NORMAL)
+                self._refresh_preview(nodes)
+                self._log_append(
+                    f"✓ 获取成功：{meta.title} / {meta.author} / "
+                    f"{meta.total_pages or '?'} 页"
+                )
+                self._update_run_button()
+                return
+            elif kind == "err":
+                err = msg[1]
+                self._fetch_status.set(f"✗ 失败")
+                self._log_append(f"✗ 获取失败: {err}")
+                self._fetch_btn.config(state=tk.NORMAL)
+                messagebox.showerror("获取失败", err)
+                return
+        except (queue.Empty, AttributeError):
+            pass
+        self.after(100, self._poll_fetch)
+
+    # ------------------------------------------------------------------
     # Parse
     # ------------------------------------------------------------------
 
@@ -383,7 +484,14 @@ class BookmarkApp(tk.Tk):
                 page_offset=self._page_offset.get(),
                 on_progress=lambda c, t: self._progress_queue.put(("p", c, t)),
             )
-            self._progress_queue.put(("done", out_path))
+            # Auto-save bookmark tree as TXT (next to the output PDF)
+            txt_path = default_txt_path_for(out_path)
+            try:
+                save_bookmarks_txt(nodes, txt_path)
+                self._progress_queue.put(("done", out_path, txt_path))
+            except OSError as e:
+                # TXT save failure shouldn't block the mount result
+                self._progress_queue.put(("done", out_path, None, str(e)))
         except PageOutOfRangeError as e:
             self._progress_queue.put(("err", f"页码越界（行 {e.line_no}）: {e.page}，PDF 共 {e.page_count} 页"))
         except Exception as e:
@@ -401,12 +509,21 @@ class BookmarkApp(tk.Tk):
                 elif kind == "done":
                     out_path = msg[1]
                     self._progress["value"] = 100
-                    self._log_append("✓ 完成")
+                    self._log_append("✓ 挂载完成")
+                    txt_path = msg[2] if len(msg) > 2 else None
+                    txt_err = msg[3] if len(msg) > 3 else None
+                    if txt_path is not None:
+                        self._log_append(f"✓ 书签文件已保存: {txt_path}")
+                    elif txt_err is not None:
+                        self._log_append(f"⚠ 书签文件保存失败: {txt_err}")
                     self._run_btn.config(state=tk.NORMAL)
-                    if messagebox.askyesno(
-                        "完成",
-                        f"书签已挂载到:\n{out_path}\n\n是否打开所在文件夹？",
-                    ):
+                    msg_text = f"书签已挂载到:\n{out_path}"
+                    if txt_path is not None:
+                        msg_text += f"\n\n书签文件已保存:\n{txt_path}"
+                    elif txt_err is not None:
+                        msg_text += f"\n\n（书签文件保存失败: {txt_err}）"
+                    msg_text += "\n\n是否打开所在文件夹？"
+                    if messagebox.askyesno("完成", msg_text):
                         self._open_folder(out_path.parent)
                     return
                 elif kind == "err":

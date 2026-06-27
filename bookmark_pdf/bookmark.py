@@ -6,7 +6,7 @@ from typing import Callable, Literal
 
 from pypdf import PdfReader, PdfWriter
 
-from bookmark_pdf.parser import BookmarkNode
+from bookmark_pdf.parser import BookmarkNode, to_indent_dot
 
 
 class PageOutOfRangeError(Exception):
@@ -154,3 +154,41 @@ def _add_node(
             writer, child, parent=child_parent,
             page_offset=page_offset, page_count=page_count,
         )
+
+
+# ---------------------------------------------------------------------------
+# TXT export (round-trippable with indent-dot parser template)
+# ---------------------------------------------------------------------------
+
+
+def save_bookmarks_txt(
+    nodes: list[BookmarkNode],
+    output_path: Path,
+    *,
+    indent_spaces: int = 2,
+) -> Path:
+    """Save a bookmark tree as indent-dot format TXT.
+
+    The output can be re-parsed by ``Parser.BUILTIN_RULES["indent-dot"]``.
+
+    Args:
+        nodes: Top-level bookmark nodes.
+        output_path: Destination .txt path (will be overwritten).
+        indent_spaces: Number of spaces per nesting level.
+
+    Returns:
+        The same output_path for convenience.
+    """
+    output_path.write_text(
+        to_indent_dot(nodes, indent_spaces=indent_spaces),
+        encoding="utf-8",
+    )
+    return output_path
+
+
+def default_txt_path_for(pdf_path: Path) -> Path:
+    """Compute the default bookmark TXT path for a given PDF.
+
+    Example: ``foo.pdf`` → ``foo_bookmarks.txt`` in the same directory.
+    """
+    return pdf_path.with_name(pdf_path.stem + "_bookmarks.txt")

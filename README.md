@@ -168,13 +168,17 @@ wc -l bookmark_pdf/*.py
 
 ### 打包为可执行文件
 
-打包相关文件统一在 [`packaging/`](packaging/) 目录下：
+打包相关文件与产物统一在 [`packaging/`](packaging/) 目录下：
 
 ```
 packaging/
-├── bookmark_pdf.spec    # PyInstaller 配置
-├── build.sh             # 一键构建脚本
-└── README.md            # 打包说明
+├── bookmark_pdf.spec        # PyInstaller 配置
+├── build.sh                 # 一键构建脚本
+├── README.md                # 打包说明
+├── build/                   # 中间产物（git 忽略）
+└── dist/                    # 最终产物（git 忽略）
+    ├── BookmarkPDF.app/              # macOS 应用包
+    └── BookmarkPDF-macos-arm64.zip  # 可分发的压缩包
 ```
 
 ```bash
@@ -185,7 +189,7 @@ packaging/
 ./packaging/build.sh --clean
 ```
 
-产物位于 `dist/BookmarkPDF/`（根目录）。详见 [packaging/README.md](packaging/README.md)。
+产物全部在 `packaging/dist/` 下，**不污染根目录**。详见 [packaging/README.md](packaging/README.md)。
 
 ---
 

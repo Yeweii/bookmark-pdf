@@ -42,9 +42,9 @@ htmlcov/
 .tox/
 .cache
 
-# PyInstaller
-build/
-dist/
+# PyInstaller (intermediate + final under packaging/)
+packaging/build/
+packaging/dist/
 *.spec.bak
 
 # Output

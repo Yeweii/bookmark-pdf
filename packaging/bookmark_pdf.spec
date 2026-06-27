@@ -60,7 +60,17 @@ coll = COLLECT(
     name='BookmarkPDF',
 )
 
-# macOS .app BUNDLE is disabled due to a PyInstaller 6 + Python 3.13 issue:
-# libpython3.13.dylib is not placed in Contents/Frameworks, causing load failures.
-# Workaround: use the onedir build at dist/BookmarkPDF/BookmarkPDF,
-# or wrap manually with py2app / codesign later.
+app = BUNDLE(
+    coll,
+    name='BookmarkPDF.app',
+    icon=None,
+    bundle_identifier='com.yeweii.bookmark-pdf',
+    info_plist={
+        'CFBundleName': 'BookmarkPDF',
+        'CFBundleDisplayName': '书签挂载工具',
+        'CFBundleShortVersionString': '1.0.0',
+        'CFBundleVersion': '1.0.0',
+        'NSHighResolutionCapable': 'True',
+        'LSMinimumSystemVersion': '10.13',
+    },
+)

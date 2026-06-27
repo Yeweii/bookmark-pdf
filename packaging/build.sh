@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Build standalone executable for the current platform.
+# Build standalone .app bundle for the current platform.
 #
 # Usage:
-#   ./packaging/build.sh           # Build
+#   ./packaging/build.sh           # Build (incremental)
 #   ./packaging/build.sh --clean   # Clean before build
 #
-# Output:
-#   dist/BookmarkPDF/                       (onedir distribution)
-#   dist/BookmarkPDF-{platform}-{arch}.zip  (distributable archive)
+# Output (all under packaging/):
+#   packaging/build/   - PyInstaller intermediate working files
+#   packaging/dist/    - Final .app bundle + zip
 
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PACKAGING_DIR="$PROJECT_ROOT/packaging"
 cd "$PROJECT_ROOT"
 
 CLEAN=0
@@ -22,7 +23,7 @@ for arg in "$@"; do
 done
 
 if [[ "$CLEAN" == 1 ]]; then
-    rm -rf build dist
+    rm -rf packaging/build packaging/dist
 fi
 
 # Ensure PyInstaller is available
@@ -44,16 +45,34 @@ case "$OS-$ARCH" in
 esac
 
 echo "→ Building for $PLATFORM..."
+echo "  spec:    packaging/bookmark_pdf.spec"
+echo "  work:    packaging/build/"
+echo "  dist:    packaging/dist/"
 
-# Build
-pyinstaller --clean packaging/bookmark_pdf.spec
+# Build with output paths under packaging/
+pyinstaller --clean \
+    --workpath "$PACKAGING_DIR/build" \
+    --distpath "$PACKAGING_DIR/dist" \
+    "$PACKAGING_DIR/bookmark_pdf.spec"
 
-# Smoke test (skip on Windows where background process behaves differently)
-if [[ "$OS" == "Darwin" || "$OS" == "Linux" ]]; then
-    echo "→ Smoke test..."
-    if [[ "$OS" == "Darwin" ]]; then
-        # macOS: launch in background, give it 2s, then kill
-        ./dist/BookmarkPDF/BookmarkPDF &
+# Smoke test
+APP_PATH="$PACKAGING_DIR/dist/BookmarkPDF.app"
+echo ""
+echo "→ Smoke test: $APP_PATH"
+case "$OS" in
+    Darwin)
+        open "$APP_PATH"
+        sleep 3
+        if pgrep -f "BookmarkPDF.app/Contents/MacOS/BookmarkPDF" > /dev/null; then
+            echo "  ✓ Binary launched successfully"
+            pkill -9 -f "BookmarkPDF.app/Contents/MacOS/BookmarkPDF" 2>/dev/null || true
+        else
+            echo "  ✗ Binary crashed on launch"
+            exit 1
+        fi
+        ;;
+    Linux)
+        "$APP_PATH/Contents/MacOS/BookmarkPDF" 2>/dev/null &
         PID=$!
         sleep 2
         if kill -0 "$PID" 2>/dev/null; then
@@ -63,29 +82,27 @@ if [[ "$OS" == "Darwin" || "$OS" == "Linux" ]]; then
             echo "  ✗ Binary crashed on launch"
             exit 1
         fi
-    fi
-fi
+        ;;
+esac
 
 # Create distributable archive
+echo ""
 echo "→ Creating archive..."
-cd dist
-if [[ "$OS" == "MINGW"* ]]; then
-    # Windows: zip
+cd "$PACKAGING_DIR/dist"
+if [[ "$OS" == "Darwin" ]]; then
     if command -v zip &> /dev/null; then
-        zip -qr "BookmarkPDF-$PLATFORM.zip" BookmarkPDF/
-    else
-        echo "  ! zip not found; skipping archive creation"
+        zip -qr "BookmarkPDF-$PLATFORM.zip" BookmarkPDF.app/
+        echo "  ✓ BookmarkPDF-$PLATFORM.zip"
     fi
-elif [[ "$OS" == "Darwin" || "$OS" == "Linux" ]]; then
-    if [[ "$OS" == "Darwin" ]]; then
-        zip -qr "BookmarkPDF-$PLATFORM.zip" BookmarkPDF/
-    else
-        tar -czf "BookmarkPDF-$PLATFORM.tar.gz" BookmarkPDF/
-    fi
+elif [[ "$OS" == "Linux" ]]; then
+    tar -czf "BookmarkPDF-$PLATFORM.tar.gz" BookmarkPDF.app/
+    echo "  ✓ BookmarkPDF-$PLATFORM.tar.gz"
 fi
 
 echo ""
 echo "✓ Build complete"
-echo "  Distribution: dist/BookmarkPDF/"
-[[ -f "dist/BookmarkPDF-$PLATFORM.zip" || -f "dist/BookmarkPDF-$PLATFORM.tar.gz" ]] && \
-    echo "  Archive:      dist/BookmarkPDF-$PLATFORM.{zip,tar.gz}"
+echo "  App:      $APP_PATH"
+[[ -f "$PACKAGING_DIR/dist/BookmarkPDF-$PLATFORM.zip" ]] && \
+    echo "  Archive:  $PACKAGING_DIR/dist/BookmarkPDF-$PLATFORM.zip"
+[[ -f "$PACKAGING_DIR/dist/BookmarkPDF-$PLATFORM.tar.gz" ]] && \
+    echo "  Archive:  $PACKAGING_DIR/dist/BookmarkPDF-$PLATFORM.tar.gz"

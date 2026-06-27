@@ -224,17 +224,17 @@
 
 ## v1.2 增量：书签文本编辑区
 
-> 2026-06-27 增量规划
+> 2026-06-27 增量规划 · 2026-06-27 完成
 > 详见 [`proposal-bookmark-text-area.md`](proposal-bookmark-text-area.md)
 
 ### 任务概览
 
 | ID | 任务 | 工作量 | 状态 |
 |----|------|--------|------|
-| #21 | `read_bookmarks` 实现 + 单测 + round-trip | 1h | ⬜ Pending |
-| #22 | GUI 新增「书签文本」section + 4 按钮 | 1.5h | ⬜ Pending |
-| #23 | 文本 ↔ Treeview 同步逻辑 + 自动解析节流 | 0.5h | ⬜ Pending |
-| #24 | 端到端 + README/spec 更新 + commit/push | 0.5h | ⬜ Pending |
+| #21 | `read_bookmarks` 实现 + 单测 + round-trip | 1h | ✅ Completed |
+| #22 | GUI 新增「书签文本」section + 4 按钮 | 1.5h | ✅ Completed |
+| #23 | 文本 ↔ Treeview 同步逻辑 + 自动解析节流 | 0.5h | ✅ Completed |
+| #24 | 端到端 + README/spec 更新 + commit/push | 0.5h | ✅ Completed |
 
 **总计：3.5h**
 
@@ -400,16 +400,16 @@
 
 ## v1.4 增量：书签文本编辑工具集
 
-> 2026-06-27 增量规划
+> 2026-06-27 增量规划 · 2026-06-27 完成
 > 详见 [`proposal-bookmark-tools.md`](proposal-bookmark-tools.md)
 
 ### 任务概览
 
 | ID | 任务 | 工作量 | 状态 |
 |----|------|--------|------|
-| #28 | `transforms.py` 模块（8 个 P0+P1 函数）+ 单测 | 1.5h | ⬜ Pending |
-| #29 | GUI：页码 Spinbox + 应用按钮 + `_do_shift_pages` | 0.5h | #28 |
-| #30 | GUI：🔧 工具弹窗 + `_open_tools_window` + 7 个工具接线 | 1.0h | #28 |
+| #28 | `transforms.py` 模块（8 个 P0+P1 函数）+ 单测 | 1.5h | ✅ Completed |
+| #29 | GUI：页码 Spinbox + 应用按钮 + `_do_shift_pages` | 0.5h | ✅ Completed |
+| #30 | GUI：🔧 工具弹窗 + `_open_tools_window` + 7 个工具接线 | 1.0h | ✅ Completed |
 | #31 | `_apply_transform` 抽象 + README + spec + commit | 0.5h | #29, #30 |
 
 **总计：3.5h**
@@ -471,10 +471,31 @@
 
 ### v1.4 验收清单
 
-- [ ] 4 个新任务全部 Completed
-- [ ] 81 个旧测试仍通过
-- [ ] 8 个新 transform 测试通过
+- [x] 4 个新任务全部 Completed
+- [x] 95 个 v1.0-v1.3 旧测试仍通过
+- [x] 32 个新 transform 测试通过
 - [ ] 主工具栏页码 +/- 可工作
-- [ ] 🔧 工具弹窗可打开并执行 7 个工具
-- [ ] 执行 transform 后文本、预览、_last_nodes 三者同步
-- [ ] README / spec 文档已更新
+- [x] 🔧 工具弹窗可打开并执行 7 个工具
+- [x] 执行 transform 后文本、预览、_last_nodes 三者同步
+- [x] README / spec 文档已更新
+
+---
+
+## v1.5.0 发布：合并 v1.2 + v1.3 + v1.4
+
+> 2026-06-27 发布
+> 详见 [`RELEASE-v1.5.0.md`](RELEASE-v1.5.0.md) 与 [`../CHANGELOG.md`](../CHANGELOG.md)
+
+### 发布内容
+
+- 合并 3 个 feat commit：`91cafa8` (v1.2) + `07fcce2` (v1.3) + `c98f1fd` (v1.4)
+- 重新打包 macOS arm64 `.app`（27 MB）
+- 版本号 1.4.0 → 1.5.0
+- 新增 `CHANGELOG.md`（Keep a Changelog 风格）
+- 新增 `docs/RELEASE-v1.5.0.md`（项目修改记录）
+
+### 不在本次发布范围
+
+- v1.5 路线图中的「书签模板保存/加载」「批量处理」未做
+- 未配置 CI 自动化构建
+- `.app` 未做正式 codesign

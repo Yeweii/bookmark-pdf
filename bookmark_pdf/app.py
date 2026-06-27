@@ -27,6 +27,17 @@ from bookmark_pdf.parser import (
     Parser,
     to_indent_dot,
 )
+from bookmark_pdf.transforms import (
+    Transform,
+    cap_pages,
+    flatten,
+    normalize_pages,
+    remove_duplicates,
+    remove_invalid_pages,
+    shift_pages,
+    sort_by_page,
+    trim_titles,
+)
 
 
 class BookmarkApp(tk.Tk):
@@ -185,6 +196,22 @@ class BookmarkApp(tk.Tk):
             btn_frame, text="🔄 解析文本", command=self._do_parse_text,
         )
         self._parse_text_btn.pack(side=tk.LEFT, padx=4)
+
+        # Inline page shift (Spinbox + apply)
+        ttk.Label(btn_frame, text="页码 +/-").pack(side=tk.LEFT, padx=(8, 2))
+        self._page_shift_var = tk.IntVar(value=0)
+        ttk.Spinbox(
+            btn_frame, from_=-9999, to=9999, textvariable=self._page_shift_var,
+            width=6,
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            btn_frame, text="应用", command=self._do_shift_pages,
+        ).pack(side=tk.LEFT, padx=2)
+
+        self._tools_btn = ttk.Button(
+            btn_frame, text="🔧 工具 ▼", command=self._open_tools_window,
+        )
+        self._tools_btn.pack(side=tk.LEFT, padx=(8, 4))
         self._clear_text_btn = ttk.Button(
             btn_frame, text="📋 清空", command=self._do_clear_text,
         )
@@ -615,6 +642,161 @@ class BookmarkApp(tk.Tk):
             return
         self._log_append(f"✓ 已导出书签: {out}")
         self._set_status(f"已导出: {out.name}")
+
+    # ------------------------------------------------------------------
+    # Bookmark transforms (batch editing tools)
+    # ------------------------------------------------------------------
+
+    def _apply_transform(self, transform: Transform, label: str = "") -> None:
+        """Run a transform on the current nodes, then refresh text + preview."""
+        if not self._last_nodes:
+            messagebox.showwarning("提示", "请先解析书签")
+            return
+        try:
+            new_nodes = transform(self._last_nodes)
+        except Exception as e:
+            messagebox.showerror("工具失败", f"{type(e).__name__}: {e}")
+            return
+        self._last_nodes = new_nodes
+        self._set_text_content(to_indent_dot(new_nodes))
+        self._refresh_preview(new_nodes)
+        self._update_run_button()
+        name = label or getattr(transform, "__name__", "transform")
+        self._log_append(f"✓ 已应用工具: {name}")
+        self._set_status(f"已应用: {name}")
+
+    def _do_shift_pages(self) -> None:
+        offset = self._page_shift_var.get()
+        if offset == 0:
+            messagebox.showinfo("提示", "页码偏移为 0，无需修改")
+            return
+        self._apply_transform(
+            lambda nodes: shift_pages(nodes, offset),
+            label=f"页码 {offset:+d}",
+        )
+        # Reset the spinbox to 0 after applying
+        self._page_shift_var.set(0)
+
+    def _open_tools_window(self) -> None:
+        """Open a Toplevel window exposing the batch editing tools."""
+        if getattr(self, "_tools_window", None) is not None and self._tools_window.winfo_exists():
+            self._tools_window.lift()
+            self._tools_window.focus_force()
+            return
+
+        win = tk.Toplevel(self)
+        win.title("书签文本工具")
+        win.geometry("380x420")
+        win.transient(self)
+        self._tools_window = win
+        win.protocol("WM_DELETE_WINDOW", lambda: self._close_tools_window())
+
+        # Selection state
+        self._tools_choice = tk.StringVar(value="normalize")
+        self._tools_cap_value = tk.IntVar(value=9999)
+
+        # Page group
+        page_frame = ttk.LabelFrame(win, text="页码", padding=8)
+        page_frame.pack(fill=tk.X, padx=8, pady=(8, 4))
+        ttk.Radiobutton(
+            page_frame, text="归一化（从 1 开始重新编号）",
+            variable=self._tools_choice, value="normalize",
+        ).pack(anchor=tk.W)
+        cap_row = ttk.Frame(page_frame)
+        cap_row.pack(anchor=tk.W, pady=(4, 0))
+        ttk.Radiobutton(
+            cap_row, text="裁剪到最大页：",
+            variable=self._tools_choice, value="cap",
+        ).pack(side=tk.LEFT)
+        ttk.Spinbox(
+            cap_row, from_=1, to=9999, textvariable=self._tools_cap_value, width=6,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
+        # Cleanup group
+        clean_frame = ttk.LabelFrame(win, text="清理", padding=8)
+        clean_frame.pack(fill=tk.X, padx=8, pady=4)
+        ttk.Radiobutton(
+            clean_frame, text="去除重复条目（title + page）",
+            variable=self._tools_choice, value="dedup",
+        ).pack(anchor=tk.W)
+        ttk.Radiobutton(
+            clean_frame, text="移除异常页码条目（page=None）",
+            variable=self._tools_choice, value="remove_invalid",
+        ).pack(anchor=tk.W)
+
+        # Text group
+        text_frame = ttk.LabelFrame(win, text="文本", padding=8)
+        text_frame.pack(fill=tk.X, padx=8, pady=4)
+        ttk.Radiobutton(
+            text_frame, text="去除标题首尾空白",
+            variable=self._tools_choice, value="trim",
+        ).pack(anchor=tk.W)
+
+        # Tree group
+        tree_frame = ttk.LabelFrame(win, text="树形", padding=8)
+        tree_frame.pack(fill=tk.X, padx=8, pady=4)
+        ttk.Radiobutton(
+            tree_frame, text="展平（移除所有层级）",
+            variable=self._tools_choice, value="flatten",
+        ).pack(anchor=tk.W)
+        ttk.Radiobutton(
+            tree_frame, text="按页码升序排列",
+            variable=self._tools_choice, value="sort_asc",
+        ).pack(anchor=tk.W)
+        ttk.Radiobutton(
+            tree_frame, text="按页码降序排列",
+            variable=self._tools_choice, value="sort_desc",
+        ).pack(anchor=tk.W)
+
+        # Buttons
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill=tk.X, padx=8, pady=(8, 8))
+        ttk.Button(btn_row, text="执行", command=self._do_apply_tool).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(btn_row, text="取消", command=self._close_tools_window).pack(side=tk.RIGHT)
+
+    def _close_tools_window(self) -> None:
+        win = getattr(self, "_tools_window", None)
+        if win is not None and win.winfo_exists():
+            win.destroy()
+        self._tools_window = None
+
+    def _do_apply_tool(self) -> None:
+        choice = self._tools_choice.get()
+        try:
+            if choice == "normalize":
+                self._apply_transform(normalize_pages, label="归一化页码")
+            elif choice == "cap":
+                max_page = self._tools_cap_value.get()
+                if max_page < 1:
+                    messagebox.showwarning("提示", "最大页必须 ≥ 1")
+                    return
+                self._apply_transform(
+                    lambda n: cap_pages(n, max_page),
+                    label=f"裁剪到最大页 {max_page}",
+                )
+            elif choice == "dedup":
+                self._apply_transform(remove_duplicates, label="去除重复")
+            elif choice == "remove_invalid":
+                self._apply_transform(remove_invalid_pages, label="移除异常页")
+            elif choice == "trim":
+                self._apply_transform(trim_titles, label="Trim 标题")
+            elif choice == "flatten":
+                self._apply_transform(flatten, label="展平")
+            elif choice == "sort_asc":
+                self._apply_transform(
+                    lambda n: sort_by_page(n, descending=False),
+                    label="按页码升序",
+                )
+            elif choice == "sort_desc":
+                self._apply_transform(
+                    lambda n: sort_by_page(n, descending=True),
+                    label="按页码降序",
+                )
+            else:
+                messagebox.showwarning("提示", f"未知工具: {choice}")
+                return
+        finally:
+            self._close_tools_window()
 
     # ------------------------------------------------------------------
     # Mount

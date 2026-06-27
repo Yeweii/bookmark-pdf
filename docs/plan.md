@@ -6,8 +6,170 @@
 
 - v1.0：核心解析 + 挂载 + GUI（[§1-11](#1-目标)）
 - v1.1：在线书签获取接口 + 自动保存 TXT — 见 [§12](#12-增量-v11在线书签获取--自动保存-txt)
-- **v1.2（当前增量）：书签文本编辑区** — 见 [§13](#13-增量-v12书签文本编辑区)
-- 详细 proposal：[`proposal-bookmark-text-area.md`](proposal-bookmark-text-area.md)
+- v1.2：书签文本编辑区 — 见 [§13](#13-增量-v12书签文本编辑区)
+- v1.3：在线获取 UX 增强 — 见 [§14](#14-增量-v13在线获取-ux-增强)
+- **v1.4（当前增量）：书签文本编辑工具集** — 见 [§15](#15-增量-v14书签文本编辑工具集)
+- 详细 proposal：[`proposal-bookmark-tools.md`](proposal-bookmark-tools.md)
+
+---
+
+## 14. 增量 v1.3：在线获取 UX 增强
+
+### 14.1 目标
+
+围绕"在线获取 → 直接挂载"流程做最小 UX 增强：
+
+1. **不弹保存对话框**（v1.3 暂不做）：用户可通过现有的「💾 导出 TXT」按钮主动保存
+2. **加提示让用户知道可直接挂载**：「0. 在线获取」区增加 hint 标签
+3. **改进默认文件名**：当 `_source_path` 为空但 `_book_meta` 存在（即来自在线获取），`askdirectory` / `asksaveasfilename` 默认文件名用 `<title>_bookmarks.txt`
+
+详细需求与方案对比见 [`proposal-save-after-fetch.md`](proposal-save-after-fetch.md)。
+
+### 14.2 已确认决策
+
+| 项 | 选择 |
+|----|------|
+| 弹框触发 | **v1.3 暂不做**（用户决定） |
+| 默认文件名 | sanitize 后的 `<title>_bookmarks.txt`；空则用 SSID |
+| 书签源为空 | **不改校验**，仅在「0. 在线获取」加 hint 提示 |
+| 改动范围 | 仅 GUI 与 sanitize 工具函数；不改 parser/bookmark/fetcher |
+
+### 14.3 模块改动
+
+**`bookmark_pdf/app.py` 新增**：
+
+```python
+import re  # 用于 sanitize 正则
+
+# 在 BookmarkApp 类内
+@staticmethod
+def _sanitize_filename(name: str, max_len: int = 80) -> str:
+    """Sanitize a string for use as a filename (跨平台安全)。"""
+    cleaned = re.sub(r'[\\/:*?"<>|\r\n\t]', ' ', name)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len].rstrip()
+    return cleaned or "bookmarks"
+
+def _suggest_default_filename(self) -> str:
+    """根据当前来源建议默认书签文件名。
+    
+    优先级：在线获取（_book_meta.title）> 书签源文件名 stem > 'bookmarks'
+    """
+    if self._book_meta is not None:
+        base = (self._book_meta.title or "").strip() or self._book_meta.ssid
+    else:
+        source = self._source_path.get().strip()
+        base = Path(source).stem if source else "bookmarks"
+    return self._sanitize_filename(base) + "_bookmarks.txt"
+```
+
+**`bookmark_pdf/app.py` 修改**：
+
+1. `_build_fetch_section` 加 hint：
+```python
+ttk.Label(
+    frame,
+    text="提示：获取后可直接点「⚙ 执行挂载」，无需先选书签源文件。",
+    foreground="#888",
+).grid(row=1, column=1, columnspan=3, sticky=tk.W, padx=4)
+```
+（已有类似灰色 hint，扩展一条即可）
+
+2. `_do_export_txt` 改用 `_suggest_default_filename`：
+```python
+def _do_export_txt(self) -> None:
+    content = self._get_text_content()
+    if not content.strip():
+        messagebox.showwarning("提示", "文本为空，无可导出内容")
+        return
+    source = self._source_path.get().strip()
+    suggested = self._suggest_default_filename()
+    if source and Path(source).suffix.lower() in (".txt", ".md"):
+        out = Path(source)
+    else:
+        out = Path(filedialog.asksaveasfilename(
+            title="导出书签为 TXT",
+            defaultextension=".txt",
+            initialfile=suggested,         # 新增
+            filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
+        ))
+        if not out:
+            return
+    try:
+        out.write_text(content, encoding="utf-8")
+    except OSError as e:
+        messagebox.showerror("导出失败", str(e))
+        return
+    self._log_append(f"✓ 已导出书签: {out}")
+    self._set_status(f"已导出: {out.name}")
+```
+
+### 14.4 GUI 改动
+
+只改「0. 在线获取」区增加一行 hint：
+
+```
+0. 在线获取（可选）                                  ← 已存在
+   SSID: [____]  [🌐 获取书签]  ✓ 已获取... 
+   (从 api.pdfshuwu.com 拉取目录；成功后自动填入下方预览)   ← 已存在
+   提示：获取后可直接点「⚙ 执行挂载」，无需先选书签源文件。  ← 新增
+```
+
+### 14.5 错误处理
+
+| 场景 | 处理 |
+|------|------|
+| `_book_meta.title` 为空字符串 | 用 `_book_meta.ssid` 兜底 |
+| sanitize 后仍为空（极端情况） | 用 `"bookmarks"` 兜底 |
+| 导出对话框用户取消 | 无错误，不保存 |
+| 写入失败 | `messagebox.showerror` |
+
+### 14.6 测试策略
+
+**单元测试 `tests/test_export_filename.py` 新增**：
+
+- `test_sanitize_filename_removes_illegal_chars`：跨平台非法字符 `/\\:*?"<>|`
+- `test_sanitize_filename_collapses_whitespace`
+- `test_sanitize_filename_truncates`
+- `test_sanitize_filename_empty_falls_back_to_bookmarks`
+- `test_suggest_default_filename_uses_book_meta_title`（mock `_book_meta`）
+- `test_suggest_default_filename_falls_back_to_ssid`
+- `test_suggest_default_filename_uses_source_path_stem`
+- `test_suggest_default_filename_no_source_uses_bookmarks`
+
+**手动验收**：
+
+- 在线获取后点「💾 导出 TXT」→ Save As 弹窗默认名为 `<书名>_bookmarks.txt`
+- 文件名含 `/` 等非法字符时 sanitize 生效
+- 「0. 在线获取」区 hint 显示
+- 在线获取后不选书签源，直接挂载仍可用（已支持）
+
+### 14.7 执行任务（v1.3 增量）
+
+| ID | 任务 | 工作量 | 依赖 |
+|----|------|--------|------|
+| #25 | `_sanitize_filename` + `_suggest_default_filename` 实现 + 单测 | 0.5h | — |
+| #26 | `_build_fetch_section` 加 hint + `_do_export_txt` 改用 suggested | 0.3h | #25 |
+| #27 | README + spec 更新 + commit | 0.3h | #26 |
+
+**v1.3 总计：约 1.1h**
+
+### 14.8 验收标准
+
+- [ ] `_sanitize_filename` 处理非法字符、连续空白、长度截断、空字符串
+- [ ] `_suggest_default_filename` 在不同来源下返回正确默认名
+- [ ] 「0. 在线获取」区显示 hint 标签
+- [ ] 在线获取后点「💾 导出 TXT」→ 默认名为 `<书名>_bookmarks.txt`
+- [ ] 81 个旧测试 + 新增单元测试全部通过
+- [ ] GUI 启动正常，挂载流程不受影响
+
+### 14.9 风险
+
+| 风险 | 缓解 |
+|------|------|
+| 用户期望弹框但未实现 | 在 commit message 中说明 "v1.3 仅做 UX 增强，弹框留待后续" |
+| sanitize 边界情况 | 单元测试覆盖；兜底用 `bookmarks` |
 
 ---
 
@@ -510,6 +672,165 @@ bookmark_pdf/
 - [ ] MD 三种模板均能正确解析，层级由 `#` 数量决定
 - [ ] 自定义正则可正常解析并预览
 - [ ] 单层 / 多层书签均能正确挂载到 PDF
+
+---
+
+## 15. 增量 v1.4：书签文本编辑工具集
+
+### 15.1 目标
+
+为「2. 书签文本（可编辑）」section 新增**批量编辑工具集**，覆盖最常见操作：
+
+1. **页码批量偏移**（用户明确要求）：所有页码 +/- N
+2. **其他实用工具**：归一化、裁剪、去重、Trim、展平、按页排序、移除异常页等
+
+详细需求与方案对比见 [`proposal-bookmark-tools.md`](proposal-bookmark-tools.md)。
+
+### 15.2 已确认决策
+
+| 项 | 选择 |
+|----|------|
+| 工具范围 | P0+P1（8 个工具） |
+| 页码 +/- 交互 | 主工具栏 Spinbox + 「应用」按钮 |
+| 工具入口 | 主工具栏（页码 +/-）+ 🔧 工具弹窗（其余 7 个） |
+| 新增模块 | `bookmark_pdf/transforms.py`（纯函数模块） |
+| 改动范围 | GUI + 新增 transforms 模块；不动 parser/bookmark/fetcher |
+
+### 15.3 模块改动
+
+**新增 `bookmark_pdf/transforms.py`**：每个工具为纯函数
+
+```python
+Transform = Callable[[list[BookmarkNode]], list[BookmarkNode]]
+
+def shift_pages(nodes, offset: int) -> list[BookmarkNode]:
+    """所有页码 +/- offset；page=None 不变。"""
+
+def normalize_pages(nodes, start: int = 1) -> list[BookmarkNode]:
+    """按 DFS 顺序从 start 重新编号。"""
+
+def cap_pages(nodes, max_page: int) -> list[BookmarkNode]:
+    """超过 max_page 的设为 None。"""
+
+def sort_by_page(nodes, descending: bool = False) -> list[BookmarkNode]:
+    """按页码排序；page=None 排末尾。"""
+
+def remove_duplicates(nodes) -> list[BookmarkNode]:
+    """(title, page) 重复的去重，保留首次。"""
+
+def remove_invalid_pages(nodes) -> list[BookmarkNode]:
+    """移除 page=None 的条目（递归）。"""
+
+def trim_titles(nodes) -> list[BookmarkNode]:
+    """标题首尾去空白。"""
+
+def flatten(nodes) -> list[BookmarkNode]:
+    """移除所有层级，DFS 展平到顶层。"""
+```
+
+### 15.4 GUI 改动
+
+**主工具栏**（在 `_build_text_section` 内）：
+
+```
+[📥 从 PDF 读取书签] [🔄 解析文本] [页码 +/- [N] [应用]] [🔧 工具 ▼] [📋 清空] [💾 导出 TXT]
+```
+
+**新增 `_open_tools_window`**：弹 `Toplevel` 工具弹窗，列出其余 7 个工具：
+
+| 分组 | 工具 |
+|------|------|
+| 页码 | 归一化、裁剪到最大页 |
+| 清理 | 去重、移除异常页 |
+| 文本 | Trim 标题 |
+| 树形 | 展平、按页码升/降序 |
+
+**新增 `_apply_transform(transform)` 抽象方法**：
+```python
+def _apply_transform(self, transform: Transform, label: str = "") -> None:
+    if not self._last_nodes:
+        messagebox.showwarning("提示", "请先解析书签")
+        return
+    try:
+        new_nodes = transform(self._last_nodes)
+    except Exception as e:
+        messagebox.showerror("工具失败", f"{type(e).__name__}: {e}")
+        return
+    self._last_nodes = new_nodes
+    self._set_text_content(to_indent_dot(new_nodes))
+    self._refresh_preview(new_nodes)
+    self._update_run_button()
+    self._log_append(f"✓ 已应用工具: {label or transform.__name__}")
+```
+
+### 15.5 错误处理
+
+| 场景 | 处理 |
+|------|------|
+| `_last_nodes` 为空 | 提示先解析 |
+| transform 抛错 | messagebox.showerror |
+| 工具参数非法 | 输入校验（如 `max_page >= 1`） |
+
+### 15.6 测试策略
+
+**单元测试 `tests/test_transforms.py` 新增**：
+
+每个 transform ≥ 2 用例（含嵌套）：
+
+- `shift_pages` /  `shift_pages_with_none` / `shift_pages_nested`
+- `normalize_pages` / `normalize_pages_with_start_5`
+- `cap_pages` / `cap_pages_nested`
+- `sort_by_page_asc` / `sort_by_page_desc` / `sort_by_page_with_none`
+- `remove_duplicates` / `remove_duplicates_nested`
+- `remove_invalid_pages` / `remove_invalid_pages_keeps_children`
+- `trim_titles` / `trim_titles_nested`
+- `flatten` / `flatten_already_flat`
+
+**Round-trip**：除归一化/排序/裁剪外，`to_indent_dot(transform(parse(text)))` 应结构等价。
+
+**GUI 手动验收**：
+
+- 输入文本 → Spinbox +5 → 应用 → 文本 +5 且预览刷新
+- 🔧 工具 → 选「归一化」→ 文本从 1 开始重新编号
+- 🔧 工具 → 选「按页码降序」→ 文本顺序改变
+- 任何工具执行后，点「⚙ 执行挂载」仍可用
+
+### 15.7 执行任务（v1.4 增量）
+
+| ID | 任务 | 工作量 | 依赖 |
+|----|------|--------|------|
+| #28 | `transforms.py` 模块（8 个 P0+P1 函数）+ 单测 | 1.5h | — |
+| #29 | GUI：页码 Spinbox + 应用按钮 + `_do_shift_pages` | 0.5h | #28 |
+| #30 | GUI：🔧 工具弹窗 + `_open_tools_window` + 7 个工具接线 | 1.0h | #28 |
+| #31 | `_apply_transform` 抽象 + README + spec + commit | 0.5h | #29, #30 |
+
+**v1.4 总计：约 3.5h**
+
+### 15.8 验收标准
+
+- [ ] 8 个 transform 函数全部实现并通过单测
+- [ ] 主工具栏页码 +/- Spinbox 工作
+- [ ] 🔧 工具弹窗列出其余 7 个工具并可执行
+- [ ] 执行 transform 后文本、预览、_last_nodes 三者同步
+- [ ] 81 个旧测试 + 新增 transforms 测试全部通过
+- [ ] README 补充「书签文本工具」用法
+- [ ] GUI 启动 < 1s
+
+### 15.9 风险
+
+| 风险 | 缓解 |
+|------|------|
+| 工具按钮挤占 UI | 仅页码 +/- 直接显示；其余放弹窗 |
+| transform 误删数据 | round-trip 测试覆盖；日志记录每次执行 |
+| 大量工具发现性 | 弹窗分类展示，命名清晰 |
+
+---
+
+## 16. 未来扩展（不在 v1.4）
+
+- transform 撤销栈（v1.5）
+- P2 工具：prefix_titles / remove_titles_matching / fix_negative_pages
+- 正则批量编辑（v1.5）
 - [ ] 越界页码 / 非数字页码给出明确错误并在预览中标红
 - [ ] 原位覆盖与新文件两种模式均工作
 - [ ] 输出 PDF 在 Preview / Adobe Reader 中可显示书签树并正确跳转

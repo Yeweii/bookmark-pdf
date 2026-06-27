@@ -311,3 +311,161 @@
 - [ ] README 补充「书签文本区」用法说明
 - [ ] GUI 启动 < 1s（增加 section 后不退化）
 - [ ] 解析 1000 行 < 100ms
+
+---
+
+## v1.3 增量：在线获取 UX 增强
+
+> 2026-06-27 增量规划
+> 详见 [`proposal-save-after-fetch.md`](proposal-save-after-fetch.md)
+
+### 任务概览
+
+| ID | 任务 | 工作量 | 状态 |
+|----|------|--------|------|
+| #25 | `_sanitize_filename` + `_suggest_default_filename` 实现 + 单测 | 0.5h | ⬜ Pending |
+| #26 | `_build_fetch_section` 加 hint + `_do_export_txt` 改用 suggested | 0.3h | ⬜ Pending |
+| #27 | README + spec 更新 + commit | 0.3h | ⬜ Pending |
+
+**总计：1.1h**
+
+### 依赖关系
+
+```
+#25 (sanitize + suggest)
+    │
+    ▼
+#26 (GUI hint + export)
+    │
+    ▼
+#27 (文档)
+```
+
+### #25 · sanitize 与默认文件名工具（TDD）
+
+- `app.py::BookmarkApp._sanitize_filename(name, max_len=80) -> str`：
+  - 移除 `/\\:*?"<>|\r\n\t`
+  - 折叠连续空白
+  - 截断到 max_len
+  - 空字符串兜底 `"bookmarks"`
+- `app.py::BookmarkApp._suggest_default_filename() -> str`：
+  - 优先级：`_book_meta.title` > `_source_path.stem` > `"bookmarks"`
+  - 书名为空时回退到 `_book_meta.ssid`
+- 单测 `tests/test_export_filename.py`：
+  - `test_sanitize_filename_removes_illegal_chars`
+  - `test_sanitize_filename_collapses_whitespace`
+  - `test_sanitize_filename_truncates`
+  - `test_sanitize_filename_empty_falls_back_to_bookmarks`
+  - `test_suggest_default_filename_uses_book_meta_title`
+  - `test_suggest_default_filename_falls_back_to_ssid`
+  - `test_suggest_default_filename_uses_source_path_stem`
+  - `test_suggest_default_filename_no_source_uses_bookmarks`
+
+### #26 · GUI hint + export 默认名
+
+- `_build_fetch_section` 增加 hint：
+  - `提示：获取后可直接点「⚙ 执行挂载」，无需先选书签源文件。`
+- `_do_export_txt` 修改：
+  - 用 `_suggest_default_filename()` 生成默认名
+  - `filedialog.asksaveasfilename(..., initialfile=suggested, ...)`
+
+### #27 · 文档与提交
+
+- `README.md`：在「在线获取流程」或新增小节说明「可跳过书签源直接挂载」
+- `docs/spec.md`：在 §6 补充 `_sanitize_filename` / `_suggest_default_filename` 契约
+- `docs/plan.md` §14（已完成）
+- commit + push
+- **不重新打包**（v1.3 仅 UX 改动，不发布新版本）
+
+### v1.3 验收清单
+
+- [ ] 3 个新任务全部 Completed
+- [ ] 81 个旧测试仍通过
+- [ ] 新增 sanitize / suggest 测试通过
+- [ ] 「0. 在线获取」区显示 hint 标签
+- [ ] 在线获取后点「💾 导出 TXT」→ Save As 弹窗默认名为 `<书名>_bookmarks.txt`
+- [ ] 书名含 `/` 等非法字符时 sanitize 生效
+- [ ] README / spec 文档已更新
+
+---
+
+## v1.4 增量：书签文本编辑工具集
+
+> 2026-06-27 增量规划
+> 详见 [`proposal-bookmark-tools.md`](proposal-bookmark-tools.md)
+
+### 任务概览
+
+| ID | 任务 | 工作量 | 状态 |
+|----|------|--------|------|
+| #28 | `transforms.py` 模块（8 个 P0+P1 函数）+ 单测 | 1.5h | ⬜ Pending |
+| #29 | GUI：页码 Spinbox + 应用按钮 + `_do_shift_pages` | 0.5h | #28 |
+| #30 | GUI：🔧 工具弹窗 + `_open_tools_window` + 7 个工具接线 | 1.0h | #28 |
+| #31 | `_apply_transform` 抽象 + README + spec + commit | 0.5h | #29, #30 |
+
+**总计：3.5h**
+
+### 依赖关系
+
+```
+#28 (transforms.py)
+   ├──► #29 (页码 Spinbox)
+   │       │
+   │       ▼
+   │   #31 (抽象 + 文档)
+   └──► #30 (工具弹窗)
+           │
+           ▼
+       #31 (抽象 + 文档)
+```
+
+### #28 · transforms 模块（TDD）
+
+- `bookmark_pdf/transforms.py` 新增 8 个纯函数：
+  - `shift_pages(nodes, offset)` — 所有页码 +/- offset
+  - `normalize_pages(nodes, start=1)` — 从 start 重新编号
+  - `cap_pages(nodes, max_page)` — 超过 max_page 设为 None
+  - `sort_by_page(nodes, descending=False)` — 按页码排序
+  - `remove_duplicates(nodes)` — 重复条目去重
+  - `remove_invalid_pages(nodes)` — 移除 page=None
+  - `trim_titles(nodes)` — 标题去空白
+  - `flatten(nodes)` — 移除层级
+- 每个函数：纯函数 + 处理嵌套 + None 安全
+- 单测 `tests/test_transforms.py`：
+  - 每函数 ≥ 2 用例
+  - round-trip 测试（除归一化/排序/裁剪外）
+
+### #29 · GUI 页码 +/- 直接显示
+
+- `_build_text_section` 按钮区新增：
+  - `Label("页码 +/-")` + `Spinbox(-9999, 9999)` + `Button("应用")`
+- `_do_shift_pages(offset)`：
+  - 调用 `_apply_transform(lambda n: shift_pages(n, offset), f"页码 {offset:+d}")`
+
+### #30 · 🔧 工具弹窗
+
+- `_open_tools_window()`：
+  - 弹 `tk.Toplevel`，标题"书签文本工具"
+  - 4 个分组：`ttk.Labelframe`
+  - 每组若干 `ttk.Radiobutton` + 参数 `Entry/Spinbox`
+  - 底部 `[执行] [取消]`
+- 弹窗点击"执行" → 调 `_apply_transform`
+- 7 个工具接线：normalize / cap / sort_asc / sort_desc / dedup / remove_invalid / trim / flatten
+- 弹窗关闭时清理引用
+
+### #31 · 抽象 + 文档
+
+- `_apply_transform(transform, label)` 通用抽象方法
+- README 补充「书签文本工具」用法章节
+- spec.md §6 补充 transforms 模块契约
+- commit + push
+
+### v1.4 验收清单
+
+- [ ] 4 个新任务全部 Completed
+- [ ] 81 个旧测试仍通过
+- [ ] 8 个新 transform 测试通过
+- [ ] 主工具栏页码 +/- 可工作
+- [ ] 🔧 工具弹窗可打开并执行 7 个工具
+- [ ] 执行 transform 后文本、预览、_last_nodes 三者同步
+- [ ] README / spec 文档已更新

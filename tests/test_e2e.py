@@ -6,8 +6,8 @@ from pypdf import PdfReader
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-from bookmark_pdf.bookmark import mount_bookmarks
-from bookmark_pdf.parser import Parser
+from bookmark_pdf.bookmark import mount_bookmarks, read_bookmarks
+from bookmark_pdf.parser import BookmarkNode, Parser, to_indent_dot
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -157,3 +157,84 @@ def test_examples_parseable(big_pdf: Path, tmp_path: Path):
         out = tmp_path / f"out_{fname}.pdf"
         mount_bookmarks(big_pdf, nodes, out)
         assert out.exists()
+
+
+# ---------------------------------------------------------------------------
+# v1.2: text area → parse → mount → re-read
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_paste_text_parse_mount(big_pdf: Path, tmp_path: Path):
+    """Simulate user pasting indent-dot text → parse → mount → verify outline."""
+    pasted = (
+        "第一章 引言 ...... 1\n"
+        "  1.1 背景 ...... 2\n"
+        "  1.2 动机 ...... 3\n"
+        "第二章 方法 ...... 5\n"
+        "第三章 实验 ...... 8\n"
+    )
+    # Step 1: parse the pasted text (this is what the GUI does)
+    nodes = Parser(Parser.BUILTIN_RULES["indent-dot"]).parse(pasted)
+    assert len(nodes) == 3
+    assert len(nodes[0].children) == 2
+
+    # Step 2: serialize to indent-dot (this is what the GUI does on sync)
+    text = to_indent_dot(nodes)
+    assert "1.1 背景" in text
+
+    # Step 3: re-parse the serialized text (round-trip)
+    reparsed = Parser(Parser.BUILTIN_RULES["indent-dot"]).parse(text)
+    assert len(reparsed) == len(nodes)
+
+    # Step 4: mount to PDF
+    out = tmp_path / "out.pdf"
+    mount_bookmarks(big_pdf, nodes, out)
+
+    # Step 5: verify outline by re-reading
+    reader = PdfReader(str(out))
+    flat = _flat_outline(reader.outline)
+    titles = [item.title for item in flat]
+    assert "1.1 背景" in titles
+    assert "1.2 动机" in titles
+    assert "第三章 实验" in titles
+
+
+def test_e2e_read_pdf_bookmarks_remount(big_pdf: Path, tmp_path: Path):
+    """Simulate user clicking '📥 从 PDF 读取书签' → mount → verify."""
+    # Step 1: write some outline to a source PDF
+    src_pdf = tmp_path / "src.pdf"
+    make_pdf(src_pdf, 80)
+    source_nodes = [
+        BookmarkNode(
+            title="概述", page=1, line_no=1,
+            children=[
+                BookmarkNode("背景", 2, 2),
+                BookmarkNode("动机", 3, 3),
+            ],
+        ),
+        BookmarkNode("方法", 5, 4),
+        BookmarkNode("结论", 10, 5),
+    ]
+    mount_bookmarks(src_pdf, source_nodes, src_pdf, mode="replace", page_offset=-1)
+
+    # Step 2: read back via read_bookmarks (this is what the GUI does)
+    read_back = read_bookmarks(src_pdf)
+    assert len(read_back) == 3
+    assert read_back[0].title == "概述"
+    assert len(read_back[0].children) == 2
+
+    # Step 3: serialize to indent-dot (this is what the GUI puts in text area)
+    text = to_indent_dot(read_back)
+    assert "概述 ...... 1" in text
+    assert "背景 ...... 2" in text
+
+    # Step 4: re-mount to a different PDF (simulates user editing then mounting)
+    out_pdf = tmp_path / "out.pdf"
+    mount_bookmarks(big_pdf, read_back, out_pdf, page_offset=-1)
+
+    # Step 5: verify final outline
+    final = read_bookmarks(out_pdf)
+    final_titles = [n.title for n in final]
+    assert "概述" in final_titles
+    assert "方法" in final_titles
+    assert "结论" in final_titles

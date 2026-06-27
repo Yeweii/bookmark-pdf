@@ -219,3 +219,95 @@
 - [ ] README 含用法、解析规则示例、常见问题
 - [ ] 无 `pypdf` 之外的运行依赖
 - [ ] GUI 启动 < 1s，解析 1000 行 < 100ms
+
+---
+
+## v1.2 增量：书签文本编辑区
+
+> 2026-06-27 增量规划
+> 详见 [`proposal-bookmark-text-area.md`](proposal-bookmark-text-area.md)
+
+### 任务概览
+
+| ID | 任务 | 工作量 | 状态 |
+|----|------|--------|------|
+| #21 | `read_bookmarks` 实现 + 单测 + round-trip | 1h | ⬜ Pending |
+| #22 | GUI 新增「书签文本」section + 4 按钮 | 1.5h | ⬜ Pending |
+| #23 | 文本 ↔ Treeview 同步逻辑 + 自动解析节流 | 0.5h | ⬜ Pending |
+| #24 | 端到端 + README/spec 更新 + commit/push | 0.5h | ⬜ Pending |
+
+**总计：3.5h**
+
+### 依赖关系
+
+```
+[parser, bookmark] ──► #21 (read_bookmarks)
+                            │
+                            ▼
+                       #22 (GUI section)
+                            │
+                            ▼
+                       #23 (同步逻辑)
+                            │
+                            ▼
+                       #24 (E2E + 文档)
+```
+
+### #21 · 读取 PDF 书签（TDD）
+
+- `src/bookmark.py::read_bookmarks(pdf_path) -> list[BookmarkNode]`
+  - 递归遍历 `reader.outline`（处理嵌套 list，复用 `_walk` 思路）
+  - `reader.get_destination_page_number(item.page)` 取页索引 → +1 转 1-based
+  - 异常页码 → `page=None`，不抛错
+  - `line_no` 按 DFS 顺序分配
+- `tests/test_bookmark.py` 新增：
+  - `test_read_bookmarks_with_outline`：reportlab 造带 outline 的 PDF → 验证节点结构
+  - `test_read_bookmarks_no_outline`：返回空列表
+  - `test_read_bookmarks_nested`：多层 outline → 正确建立 children
+  - `test_read_bookmarks_invalid_page`：`page=None`
+  - `test_read_bookmarks_round_trip`：`read → to_indent_dot → parse` 结构等价
+
+### #22 · GUI 新增「书签文本」section
+
+- `src/app.py`：在「1. 选择文件」与「2. 解析规则」之间新增 `_build_text_section()`
+- 文本控件：`tk.Text(height=8, wrap=tk.WORD)` + `Scrollbar`
+- 四个按钮：
+  - `📥 从 PDF 读取书签` → `_do_read_pdf()`
+  - `🔄 解析文本` → `_do_parse_text()`
+  - `📋 清空` → 清空 Text + `_last_nodes` + Treeview
+  - `💾 导出 TXT` → 写入 `_source_path` 或弹窗另存为
+- 状态变量：`self._text_dirty = tk.BooleanVar(value=False)` 标记文本被编辑
+- 编号调整：原「2. 解析规则」保持，但「3. 预览」→「4. 预览」，依此类推
+
+### #23 · 文本 ↔ Treeview 同步
+
+- 新增 `_sync_text_from_nodes(nodes)`：用 `to_indent_dot` 序列化后填入 Text
+- 新增 `_sync_tree_from_nodes(nodes)`：复用 `_refresh_preview`
+- 修改 `_do_parse` / `_do_fetch`：解析成功后调用 `_sync_text_from_nodes`
+- 自动解析：`Text` 控件绑定 `<KeyRelease>` + 500ms `after` 节流 → 自动 `_do_parse_text()`
+- `_do_parse_text`：Text 内容 → 当前规则 → `_last_nodes` → `_refresh_preview`
+
+### #24 · 端到端验收与文档
+
+- `tests/test_e2e.py` 新增：粘贴文本 → 解析 → 挂载 → 读取校验
+- `README.md`：补充「书签文本区」用法章节
+- `docs/spec.md`：补充 `read_bookmarks` 接口契约
+- `docs/plan.md` §13（已完成）
+- commit + push
+
+### v1.2 验收清单
+
+- [ ] 4 个新任务全部 Completed
+- [ ] 51 个 v1.0 测试 + v1.1 测试全部通过
+- [ ] 新增 `read_bookmarks` 测试通过
+- [ ] round-trip 测试通过
+- [ ] PDF 有书签时「📥 读取」正确填充文本区
+- [ ] PDF 无书签时不崩溃，友好提示
+- [ ] 外部粘贴文本 → 解析 → Treeview → 挂载链路通
+- [ ] 文本区编辑 → 解析 → 挂载链路通
+- [ ] 现有 TXT/MD 文件输入流仍可用
+- [ ] 现有 SSID 在线获取仍可用
+- [ ] 文本区与 Treeview 双向同步
+- [ ] README 补充「书签文本区」用法说明
+- [ ] GUI 启动 < 1s（增加 section 后不退化）
+- [ ] 解析 1000 行 < 100ms

@@ -12,6 +12,7 @@ from bookmark_pdf.bookmark import (
     PageOutOfRangeError,
     default_txt_path_for,
     mount_bookmarks,
+    read_bookmarks,
     save_bookmarks_txt,
 )
 from bookmark_pdf.fetcher import (
@@ -24,6 +25,7 @@ from bookmark_pdf.parser import (
     ParseError,
     ParseRule,
     Parser,
+    to_indent_dot,
 )
 
 
@@ -53,6 +55,10 @@ class BookmarkApp(tk.Tk):
         # Cached parse result
         self._last_nodes: list[BookmarkNode] = []
 
+        # Text section state
+        self._text_dirty = tk.BooleanVar(value=False)
+        self._text_parse_after_id: str | None = None
+
         # Thread communication
         self._progress_queue: queue.Queue = queue.Queue()
         self._fetch_queue: queue.Queue = queue.Queue()
@@ -79,6 +85,9 @@ class BookmarkApp(tk.Tk):
         ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
 
         self._build_file_section(outer)
+        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+
+        self._build_text_section(outer)
         ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
 
         self._build_rule_section(outer)
@@ -142,8 +151,53 @@ class BookmarkApp(tk.Tk):
 
         frame.columnconfigure(1, weight=1)
 
+    def _build_text_section(self, parent: ttk.Frame) -> None:
+        frame = ttk.LabelFrame(parent, text="2. 书签文本（可编辑）", padding=8)
+        frame.pack(fill=tk.X)
+
+        ttk.Label(
+            frame,
+            text="格式：indent-dot（Title ...... Page）。可直接编辑、从 PDF 读取、或粘贴外部文本。",
+            foreground="#666",
+        ).grid(row=0, column=0, columnspan=4, sticky=tk.W, padx=4, pady=(0, 4))
+
+        # Text widget with scrollbar
+        text_wrap = ttk.Frame(frame)
+        text_wrap.grid(row=1, column=0, columnspan=4, sticky=tk.EW, padx=4)
+        self._text_widget = tk.Text(
+            text_wrap, height=8, wrap=tk.NONE, font=("TkFixedFont", 11),
+        )
+        self._text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll_y = ttk.Scrollbar(text_wrap, orient=tk.VERTICAL, command=self._text_widget.yview)
+        scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+        self._text_widget.configure(yscrollcommand=scroll_y.set)
+        self._text_widget.bind("<<Modified>>", self._on_text_modified)
+        self._text_widget.bind("<KeyRelease>", self._on_text_keyrelease)
+
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=2, column=0, columnspan=4, sticky=tk.W, padx=4, pady=(6, 0))
+        self._read_pdf_btn = ttk.Button(
+            btn_frame, text="📥 从 PDF 读取书签", command=self._do_read_pdf,
+        )
+        self._read_pdf_btn.pack(side=tk.LEFT, padx=(0, 4))
+        self._parse_text_btn = ttk.Button(
+            btn_frame, text="🔄 解析文本", command=self._do_parse_text,
+        )
+        self._parse_text_btn.pack(side=tk.LEFT, padx=4)
+        self._clear_text_btn = ttk.Button(
+            btn_frame, text="📋 清空", command=self._do_clear_text,
+        )
+        self._clear_text_btn.pack(side=tk.LEFT, padx=4)
+        self._export_txt_btn = ttk.Button(
+            btn_frame, text="💾 导出 TXT", command=self._do_export_txt,
+        )
+        self._export_txt_btn.pack(side=tk.LEFT, padx=4)
+
+        frame.columnconfigure(0, weight=1)
+
     def _build_rule_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="2. 解析规则", padding=8)
+        frame = ttk.LabelFrame(parent, text="3. 解析规则", padding=8)
         frame.pack(fill=tk.X)
 
         # Template selector
@@ -190,7 +244,7 @@ class BookmarkApp(tk.Tk):
         frame.columnconfigure(3, weight=1)
 
     def _build_preview_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="3. 预览", padding=8)
+        frame = ttk.LabelFrame(parent, text="4. 预览", padding=8)
         frame.pack(fill=tk.BOTH, expand=True)
 
         # Treeview
@@ -214,7 +268,7 @@ class BookmarkApp(tk.Tk):
         self._status_label.pack(fill=tk.X, padx=4, pady=(2, 0))
 
     def _build_output_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="4. 输出选项", padding=8)
+        frame = ttk.LabelFrame(parent, text="5. 输出选项", padding=8)
         frame.pack(fill=tk.X)
 
         # Output mode
@@ -242,7 +296,7 @@ class BookmarkApp(tk.Tk):
         frame.columnconfigure(2, weight=1)
 
     def _build_progress_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="5. 进度与日志", padding=8)
+        frame = ttk.LabelFrame(parent, text="6. 进度与日志", padding=8)
         frame.pack(fill=tk.BOTH)
 
         # Progress bar
@@ -323,6 +377,7 @@ class BookmarkApp(tk.Tk):
                 self._last_nodes = nodes
                 self._fetch_status.set(f"✓ {meta.title}（{len(nodes)} 顶层节点）")
                 self._fetch_btn.config(state=tk.NORMAL)
+                self._sync_text_from_nodes(nodes)
                 self._refresh_preview(nodes)
                 self._log_append(
                     f"✓ 获取成功：{meta.title} / {meta.author} / "
@@ -396,6 +451,7 @@ class BookmarkApp(tk.Tk):
             return
 
         self._last_nodes = nodes
+        self._sync_text_from_nodes(nodes)
         self._refresh_preview(nodes)
         self._update_run_button()
 
@@ -428,6 +484,137 @@ class BookmarkApp(tk.Tk):
     def _update_run_button(self) -> None:
         ok = bool(self._last_nodes) and bool(self._pdf_path.get().strip())
         self._run_btn.config(state=(tk.NORMAL if ok else tk.DISABLED))
+
+    # ------------------------------------------------------------------
+    # Text section: read / parse / clear / export
+    # ------------------------------------------------------------------
+
+    def _get_text_content(self) -> str:
+        return self._text_widget.get("1.0", tk.END).rstrip("\n")
+
+    def _set_text_content(self, content: str) -> None:
+        self._text_widget.delete("1.0", tk.END)
+        if content:
+            self._text_widget.insert("1.0", content)
+        self._text_dirty.set(False)
+        # Reset modified flag so subsequent edits re-trigger <<Modified>>
+        self._text_widget.edit_modified(False)
+
+    def _sync_text_from_nodes(self, nodes: list[BookmarkNode]) -> None:
+        """Serialize current nodes into the text widget (indent-dot format)."""
+        try:
+            text = to_indent_dot(nodes)
+        except Exception:
+            return
+        # Only overwrite if user hasn't been editing, or text widget is empty
+        current = self._get_text_content().strip()
+        if not current or not self._text_dirty.get():
+            self._set_text_content(text)
+
+    def _on_text_modified(self, _event: tk.Event) -> None:
+        # The <<Modified>> virtual event fires repeatedly; we just track
+        # the flag here. Throttled auto-parse is wired through KeyRelease.
+        self._text_widget.edit_modified(False)
+
+    def _on_text_keyrelease(self, _event: tk.Event) -> None:
+        self._text_dirty.set(True)
+        if self._text_parse_after_id is not None:
+            try:
+                self.after_cancel(self._text_parse_after_id)
+            except Exception:
+                pass
+        self._text_parse_after_id = self.after(500, self._auto_parse_text)
+
+    def _auto_parse_text(self) -> None:
+        self._text_parse_after_id = None
+        if self._get_text_content().strip():
+            self._do_parse_text(silent=True)
+
+    def _do_read_pdf(self) -> None:
+        pdf_str = self._pdf_path.get().strip()
+        if not pdf_str:
+            messagebox.showwarning("提示", "请先在「1. 选择文件」中选择 PDF")
+            return
+        pdf_path = Path(pdf_str)
+        if not pdf_path.exists():
+            messagebox.showerror("错误", f"PDF 不存在: {pdf_str}")
+            return
+
+        try:
+            nodes = read_bookmarks(pdf_path)
+        except Exception as e:
+            messagebox.showerror("读取失败", f"{type(e).__name__}: {e}")
+            return
+
+        if not nodes:
+            messagebox.showinfo("提示", "该 PDF 没有书签。可直接编辑下方文本或粘贴其他来源。")
+            return
+
+        self._last_nodes = nodes
+        self._sync_text_from_nodes(nodes)
+        self._refresh_preview(nodes)
+        self._update_run_button()
+        self._set_status(f"已读取 PDF 书签：{len(nodes)} 个顶层节点")
+        self._log_append(f"✓ 从 PDF 读取书签: {pdf_path.name}（{len(nodes)} 顶层节点）")
+
+    def _do_parse_text(self, silent: bool = False) -> None:
+        content = self._get_text_content()
+        if not content.strip():
+            if not silent:
+                messagebox.showwarning("提示", "书签文本为空")
+            return
+        try:
+            nodes = Parser(Parser.BUILTIN_RULES["indent-dot"]).parse(content)
+        except ParseError as e:
+            self._set_status(f"解析错误（行 {e.line_no}）: {e.reason}")
+            if not silent:
+                messagebox.showerror("解析错误", str(e))
+            return
+        except Exception as e:
+            self._set_status(f"解析失败: {e}")
+            if not silent:
+                messagebox.showerror("解析失败", str(e))
+            return
+
+        self._last_nodes = nodes
+        self._refresh_preview(nodes)
+        self._update_run_button()
+        if not silent:
+            self._log_append(f"✓ 文本已解析：{len(nodes)} 个顶层节点")
+
+    def _do_clear_text(self) -> None:
+        self._text_widget.delete("1.0", tk.END)
+        self._text_dirty.set(False)
+        self._text_widget.edit_modified(False)
+        self._last_nodes = []
+        self._tree.delete(*self._tree.get_children())
+        self._update_run_button()
+        self._set_status("已清空文本与预览")
+
+    def _do_export_txt(self) -> None:
+        content = self._get_text_content()
+        if not content.strip():
+            messagebox.showwarning("提示", "文本为空，无可导出内容")
+            return
+        # Default destination: existing source path if set, else Save As dialog
+        source = self._source_path.get().strip()
+        if source and Path(source).suffix.lower() in (".txt", ".md"):
+            out = Path(source)
+        else:
+            out = Path(filedialog.asksaveasfilename(
+                title="导出书签为 TXT",
+                defaultextension=".txt",
+                filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
+            ))
+            if not out:
+                return
+        try:
+            out.write_text(content, encoding="utf-8")
+        except OSError as e:
+            messagebox.showerror("导出失败", str(e))
+            return
+        self._log_append(f"✓ 已导出书签: {out}")
+        self._set_status(f"已导出: {out.name}")
 
     # ------------------------------------------------------------------
     # Mount

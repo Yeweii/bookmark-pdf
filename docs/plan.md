@@ -5,7 +5,159 @@
 ## 历史版本
 
 - v1.0：核心解析 + 挂载 + GUI（[§1-11](#1-目标)）
-- **v1.1（当前增量）：在线书签获取接口 + 自动保存 TXT** — 见 [§12](#12-增量-v11在线书签获取--自动保存-txt)
+- v1.1：在线书签获取接口 + 自动保存 TXT — 见 [§12](#12-增量-v11在线书签获取--自动保存-txt)
+- **v1.2（当前增量）：书签文本编辑区** — 见 [§13](#13-增量-v12书签文本编辑区)
+- 详细 proposal：[`proposal-bookmark-text-area.md`](proposal-bookmark-text-area.md)
+
+---
+
+## 13. 增量 v1.2：书签文本编辑区
+
+### 13.1 目标
+
+新增「书签文本（可编辑）」section，作为书签的**直接编辑入口**：
+
+1. **读 PDF 书签 → 显示 → 编辑 → 挂回**：把 PDF 现有 outline 转成 `indent-dot` 文本填入编辑区，用户编辑后挂载
+2. **外部粘贴 → 编辑 → 挂载**：从任意来源（微信、网页、PDF 阅读器）拷来的目录文本直接粘贴进来，挂载到目标 PDF
+3. 现有 TXT/MD 文件输入流、SSID 在线获取、模板解析系统**全部保留**
+
+详细需求与方案对比见 [`proposal-bookmark-text-area.md`](proposal-bookmark-text-area.md)。
+
+### 13.2 已确认决策
+
+| 项 | 选择 |
+|----|------|
+| 文本区位置 | 独立 section，位于「1. 选择文件」与「2. 解析规则」之间 |
+| 文本格式 | `indent-dot`（`Title ...... Page`）— 复用 `to_indent_dot` 序列化 |
+| 读取 PDF 书签触发 | 显式按钮「📥 从 PDF 读取书签」 |
+| 来源并存 | 4 种来源并存（TXT/MD / SSID / PDF 已有 / 外部粘贴），统一汇入 `_last_nodes` |
+| 文本 → 节点触发 | 显式「🔄 解析文本」按钮 + 编辑停止 500ms 后自动解析 |
+| 现有 v1.1 自动保存 TXT | 不变，仍按 `_last_nodes` 保存 |
+
+### 13.3 数据流
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ 书签源（4 路并存）：                                                │
+│   ① TXT/MD 文件 ───┐                                             │
+│   ② 在线 SSID  ────┼──► _last_nodes (list[BookmarkNode])         │
+│   ③ PDF 已有书签 ──┤     ▲                                       │
+│   ④ 外部粘贴文本 ──┘     │                                       │
+│                          │                                       │
+│   ┌──────────────┐        │                                       │
+│   │ Treeview 预览 │◄───────┘                                       │
+│   └──────────────┘                                                │
+│          ▲                                                        │
+│   ┌──────────────┐                                                │
+│   │ 文本编辑区    │ to_indent_dot(_last_nodes) ← 用户编辑          │
+│   │ (indent-dot) │ Parser.parse(text) → _last_nodes              │
+│   └──────────────┘                                                │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 13.4 模块改动
+
+**`bookmark_pdf/bookmark.py` 新增**：
+
+```python
+def read_bookmarks(pdf_path: Path) -> list[BookmarkNode]:
+    """Read existing outline from PDF → list[BookmarkNode].
+
+    - 递归遍历 reader.outline（处理嵌套 list）
+    - PDF page index 0-based → 节点 page 1-based
+    - 无法解析页的项 page=None
+    - line_no 按 DFS 顺序分配
+    """
+```
+
+**`bookmark_pdf/app.py` 改造**：
+
+- 新增 `_build_text_section()` 在「1. 选择文件」与「2. 解析规则」之间
+- 文本控件：`tk.Text(height=8, wrap=tk.WORD)` + Scrollbar
+- 四个按钮：
+  - `📥 从 PDF 读取书签` → `_do_read_pdf()` → `read_bookmarks` → `to_indent_dot` → 填入 Text
+  - `🔄 解析文本` → `_do_parse_text()` → Text → `Parser.parse()` → `_last_nodes` → 刷新 Treeview
+  - `📋 清空` → 清空 Text + `_last_nodes` + Treeview
+  - `💾 导出 TXT` → Text 内容写入 `_source_path`（或弹窗另存为）
+- 同步逻辑：
+  - `_do_parse()`（文件输入）成功后调用 `_sync_text_from_nodes(nodes)`
+  - `_do_fetch()`（SSID）成功后调用 `_sync_text_from_nodes(nodes)`
+  - `_do_read_pdf()` 成功后 `_sync_text_from_nodes(nodes)`
+- 自动解析：`Text` 控件 `<KeyRelease>` + 500ms `after` 节流 → 自动调用 `_do_parse_text()`
+
+### 13.5 GUI 新布局（v1.2）
+
+```
+0. 在线获取（SSID → 一键拉取目录）
+1. 选择文件（书签源 + PDF）           ← 不变
+3. 书签文本（可编辑）                  ← 新增
+   ├ 多行 Text 控件（indent-dot）
+   └ [📥 从 PDF 读取书签] [🔄 解析文本] [📋 清空] [💾 导出TXT]
+2. 解析规则（模板 + 自定义正则）       ← 改编号为 2（原 2 → 2）
+4. 预览（树形结构，页码异常标红）      ← 改编号为 4
+5. 输出选项                           ← 改编号为 5
+6. 进度与日志                         ← 改编号为 6
+```
+
+### 13.6 错误处理
+
+| 场景 | 处理 |
+|------|------|
+| 文本区为空 | 「🔄 解析文本」按钮置灰；「执行挂载」已有防护 |
+| 文本格式无法解析 | `messagebox.showerror`，列出错误行号；**不清空**已有 `_last_nodes` |
+| 选择 PDF 后无 outline | `messagebox.showinfo`「该 PDF 没有书签」；Text 仍可手动编辑 |
+| PDF 加密/损坏 | `messagebox.showerror`「PDF 读取失败」 |
+| 文本区编辑后未解析就点挂载 | 仍按当前 `_last_nodes` 挂载（避免误挂脏数据） |
+| 文本区编辑后切换模板 | 不自动重新解析，下次点「🔄 解析文本」时按当前规则 |
+
+### 13.7 测试策略
+
+**单元测试 `tests/test_bookmark.py` 新增**：
+
+- `test_read_bookmarks_with_outline`：reportlab 造带 outline 的 PDF → 验证节点结构
+- `test_read_bookmarks_no_outline`：无书签 PDF → 返回空列表
+- `test_read_bookmarks_nested`：多层 outline → 正确建立 children
+- `test_read_bookmarks_invalid_page`：某项指向不存在的页 → `page=None`
+- `test_read_bookmarks_round_trip`：`read_bookmarks(pdf)` → `to_indent_dot(...)` → `Parser.parse(...)` → 结构等价
+
+**GUI 手动验收**：
+
+- 粘贴外部文本 → 解析 → Treeview 显示 → 挂载
+- 选带书签 PDF → 「📥 读取」 → 文本区显示 → 编辑一行 → 解析 → 挂载
+- 在线 SSID → 拉到预览 → 切到文本区 → 改一行 → 解析 → 挂载
+
+### 13.8 执行任务（v1.2 增量）
+
+| ID | 任务 | 工作量 | 依赖 |
+|----|------|--------|------|
+| #21 | `read_bookmarks` 实现 + 单测 + round-trip | 1h | parser, bookmark |
+| #22 | GUI 新增「书签文本」section + 4 按钮 | 1.5h | #21 |
+| #23 | 文本 ↔ Treeview 同步逻辑 + 自动解析节流 | 0.5h | #22 |
+| #24 | 端到端 + README/spec 更新 + commit/push | 0.5h | #23 |
+
+**v1.2 总计：约 3.5h**
+
+### 13.9 验收标准
+
+- [ ] PDF 有书签时「📥 读取」正确填充文本区
+- [ ] PDF 无书签时不崩溃，友好提示
+- [ ] 外部粘贴文本 → 解析 → Treeview 显示 → 挂载链路通
+- [ ] 文本区编辑 → 解析 → 挂载链路通
+- [ ] 现有 TXT/MD 文件输入流仍可用
+- [ ] 现有 SSID 在线获取仍可用
+- [ ] 文本区与 Treeview 双向同步
+- [ ] 51 个旧测试仍全部通过
+- [ ] 新增 `read_bookmarks` 测试通过
+- [ ] round-trip 测试通过
+- [ ] README 补充「书签文本区」用法说明
+
+### 13.10 风险
+
+| 风险 | 缓解 |
+|------|------|
+| 文本区与 Treeview 不同步导致挂错内容 | 解析后同步；状态栏始终显示当前节点数 |
+| PDF outline 解析异常 | 复用 `_walk` 思路；异常页设 `page=None` 而非崩溃 |
+| 占用屏幕高度 | 6 段变 7 段，可滚动容器或降低每段高度 |
 
 ---
 

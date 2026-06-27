@@ -22,6 +22,78 @@ class PageOutOfRangeError(Exception):
         self.page_count = page_count
 
 
+def read_bookmarks(pdf_path: Path) -> list[BookmarkNode]:
+    """Read existing outline from a PDF and return it as a BookmarkNode tree.
+
+    Page numbers in BookmarkNode are **1-based** (consistent with the parser),
+    even though PDF internal page indices are 0-based. A round-trip through
+    ``mount_bookmarks(..., page_offset=-1)`` therefore preserves the visible page.
+
+    Args:
+        pdf_path: Source PDF path (must not be encrypted).
+
+    Returns:
+        Top-level BookmarkNode list. Returns ``[]`` when the PDF has no outline
+        or when individual items cannot be resolved to a page.
+
+    Notes:
+        Items with unresolvable destinations keep ``page=None`` rather than
+        raising; this lets the caller re-mount a degraded tree without crashes.
+        ``line_no`` is assigned sequentially in DFS order.
+    """
+    reader = PdfReader(str(pdf_path))
+    counter = {"n": 0}
+
+    def next_line() -> int:
+        counter["n"] += 1
+        return counter["n"]
+
+    top = list(reader.outline or [])
+    return _read_flat(reader, top, next_line)
+
+
+def _read_flat(
+    reader: PdfReader,
+    items: list,
+    next_line: Callable[[], int],
+) -> list[BookmarkNode]:
+    """Walk a possibly-nested list of outline entries.
+
+    pypdf represents nested children by following the parent item with a
+    nested Python list, e.g. ``[A, [B, C], D]`` → A is parent of B,C; D is
+    a sibling of A at the same level. We collect children into the previous
+    node's ``.children`` field.
+    """
+    nodes: list[BookmarkNode] = []
+    for item in items:
+        if isinstance(item, list):
+            # Children of the previously-emitted node; root-level lists with
+            # no preceding node become root siblings.
+            if nodes:
+                nodes[-1].children.extend(_read_flat(reader, item, next_line))
+            else:
+                nodes.extend(_read_flat(reader, item, next_line))
+            continue
+        nodes.append(_read_one(reader, item, next_line))
+    return nodes
+
+
+def _read_one(reader: PdfReader, item, next_line: Callable[[], int]) -> BookmarkNode:
+    title = str(getattr(item, "title", "") or "").strip()
+    page: int | None
+    try:
+        # Pass the whole Destination; get_destination_page_number reads .page
+        # off of it. Passing the IndirectObject directly would fail because
+        # IndirectObject has no `page` attribute.
+        page_index = reader.get_destination_page_number(item)
+        page = (page_index + 1) if page_index is not None else None
+    except Exception:
+        page = None
+
+    line_no = next_line()
+    return BookmarkNode(title=title, page=page, line_no=line_no)
+
+
 def mount_bookmarks(
     pdf_path: Path,
     nodes: list[BookmarkNode],

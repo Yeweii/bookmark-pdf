@@ -176,6 +176,66 @@ class BookmarkApp(tk.Tk):
 
 GUI 调用 `Parser` 与 `mount_bookmarks`，所有耗时操作在 `threading.Thread` 中执行，通过 `queue.Queue` 与主线程通信。
 
+### 6.4 `bookmark.read_bookmarks`（v1.2 新增）
+
+```python
+from pathlib import Path
+from bookmark_pdf.parser import BookmarkNode
+
+def read_bookmarks(pdf_path: Path) -> list[BookmarkNode]:
+    """
+    读取 PDF 现有 outline，返回顶层 BookmarkNode 列表。
+
+    - 页码：1-based（与 parser 一致）
+    - 嵌套：递归处理 pypdf 的 nested-list 结构
+    - 异常页：page=None 而非抛错
+    - line_no：按 DFS 顺序分配
+    - 无 outline：返回 []
+
+    Raises:
+        FileNotFoundError: PDF 不存在
+        pypdf.errors.PdfReadError: PDF 损坏 / 加密
+    """
+```
+
+### 6.5 `parser.to_indent_dot`（v1.1 新增）
+
+```python
+def to_indent_dot(nodes: list[BookmarkNode], *, indent_spaces: int = 2) -> str:
+    """将 BookmarkNode 树序列化为 indent-dot 格式文本。
+    输出可被 BUILTIN_RULES["indent-dot"] 重新解析（round-trip）。"""
+```
+
+### 6.6 `bookmark.save_bookmarks_txt`（v1.1 新增）
+
+```python
+def save_bookmarks_txt(
+    nodes: list[BookmarkNode],
+    output_path: Path,
+    *,
+    indent_spaces: int = 2,
+) -> Path:
+    """保存为 indent-dot 格式 TXT，返回写入路径。"""
+```
+
+### 6.7 GUI「书签文本」section（v1.2 新增）
+
+GUI 在「1. 选择文件」与「3. 解析规则」之间新增「2. 书签文本（可编辑）」section：
+
+| 控件 | 行为 |
+|------|------|
+| `Text` 多行编辑区 | indent-dot 格式，高度 8 行，自动横向滚动 |
+| `📥 从 PDF 读取书签` 按钮 | 调用 `read_bookmarks(pdf_path)` → `to_indent_dot` → 填入文本区 |
+| `🔄 解析文本` 按钮 | 用 `BUILTIN_RULES["indent-dot"]` 解析当前文本 → `_last_nodes` → 刷新 Treeview |
+| `📋 清空` 按钮 | 清空文本、`_last_nodes`、Treeview |
+| `💾 导出 TXT` 按钮 | 写入 `_source_path`（若为 .txt/.md）或弹窗另存为 |
+
+**自动解析**：Text `<KeyRelease>` 事件触发 500ms 节流 → 自动调用 `_do_parse_text(silent=True)`。
+
+**双向同步**：
+- 解析成功后调用 `_sync_text_from_nodes(nodes)` → 仅在文本区为空或未脏时覆盖
+- 解析失败不清空已有 `_last_nodes`（避免误丢用户工作）
+
 ---
 
 ## 7. 错误处理矩阵

@@ -103,8 +103,10 @@ bookmark_pdf/
 │   ├── test_e2e.py      # 端到端测试
 │   └── fixtures/        # TXT/MD 测试夹具
 ├── examples/            # 示例书签文件
-├── docs/                # 计划与规范
-│   └── plan.md
+├── docs/                # 项目文档
+│   ├── plan.md          # 实施计划
+│   ├── spec.md          # 规范文档
+│   └── tasks.md         # 任务清单
 ├── plan.md              # 实施计划
 ├── spec.md              # 规范文档
 ├── tasks.md             # 任务清单

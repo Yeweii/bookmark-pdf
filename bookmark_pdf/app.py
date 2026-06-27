@@ -225,16 +225,18 @@ class BookmarkApp(tk.Tk):
             foreground="#666",
         ).grid(row=0, column=0, columnspan=4, sticky=tk.W, padx=4, pady=(0, 4))
 
-        # Text widget with scrollbar
+        # Text widget with vertical + horizontal scrollbar
         text_wrap = ttk.Frame(frame)
         text_wrap.grid(row=1, column=0, columnspan=4, sticky=tk.EW, padx=4)
         self._text_widget = tk.Text(
             text_wrap, height=8, wrap=tk.NONE, font=("TkFixedFont", 11),
         )
-        self._text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll_y = ttk.Scrollbar(text_wrap, orient=tk.VERTICAL, command=self._text_widget.yview)
+        scroll_x = ttk.Scrollbar(text_wrap, orient=tk.HORIZONTAL, command=self._text_widget.xview)
+        self._text_widget.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        self._text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
-        self._text_widget.configure(yscrollcommand=scroll_y.set)
+        scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
         self._text_widget.bind("<<Modified>>", self._on_text_modified)
         self._text_widget.bind("<KeyRelease>", self._on_text_keyrelease)
 

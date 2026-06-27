@@ -44,6 +44,11 @@ from bookmark_pdf.transforms import (
 class BookmarkApp(tk.Tk):
     """Main GUI window."""
 
+    # Section IDs used for collapse/expand registry
+    SECTIONS = (
+        "fetch", "file", "text", "rule", "preview", "output", "progress",
+    )
+
     def __init__(self) -> None:
         super().__init__()
         self.title("书签挂载工具")
@@ -75,6 +80,11 @@ class BookmarkApp(tk.Tk):
         self._progress_queue: queue.Queue = queue.Queue()
         self._fetch_queue: queue.Queue = queue.Queue()
 
+        # Collapse registry: section_id -> True (expanded) / False (collapsed)
+        self._section_collapsed: dict[str, bool] = {s: False for s in self.SECTIONS}
+        # Pack kwargs per section (for correct expand/restore after collapse)
+        self._section_pack: dict[str, dict] = {}
+
         # Build UI
         self._build_layout()
 
@@ -90,32 +100,125 @@ class BookmarkApp(tk.Tk):
     # ------------------------------------------------------------------
 
     def _build_layout(self) -> None:
-        outer = ttk.Frame(self, padding=8)
-        outer.pack(fill=tk.BOTH, expand=True)
+        # Global scrollable canvas
+        self._canvas = tk.Canvas(self, highlightthickness=0)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self._canvas.yview)
+        self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._canvas.configure(yscrollcommand=self._scrollbar.set)
 
-        self._build_fetch_section(outer)
-        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        # Inner frame holds all sections (determines scroll region)
+        self._sections_frame = ttk.Frame(self._canvas, padding=8)
+        # Window id; use add with scrollregion update after layout
+        self._canvas_window = self._canvas.create_window(
+            (0, 0), window=self._sections_frame, anchor=tk.NW,
+        )
 
-        self._build_file_section(outer)
-        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        # Scroll region update when sections_frame resizes
+        self._sections_frame.bind("<Configure>", self._on_sections_configure)
+        self._canvas.bind("<Configure>", self._on_canvas_configure)
+        # Scroll with mousewheel on all platforms
+        self._canvas.bind_all(
+            "<MouseWheel>",
+            lambda e: self._canvas.yview_scroll(int(-e.delta / 120), tk.UNITS),
+        )
+        self._canvas.bind_all(
+            "<Button-5>",
+            lambda e: self._canvas.yview_scroll(3, tk.UNITS),
+        )
+        self._canvas.bind_all(
+            "<Button-4>",
+            lambda e: self._canvas.yview_scroll(-3, tk.UNITS),
+        )
 
-        self._build_text_section(outer)
-        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        # Build sections with collapse headers
+        self._build_fetch_section(self._sections_frame)
+        self._add_separator()
 
-        self._build_rule_section(outer)
-        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        self._build_file_section(self._sections_frame)
+        self._add_separator()
 
-        self._build_preview_section(outer)
-        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        self._build_text_section(self._sections_frame)
+        self._add_separator()
 
-        self._build_output_section(outer)
-        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        self._build_rule_section(self._sections_frame)
+        self._add_separator()
 
-        self._build_progress_section(outer)
+        self._build_preview_section(self._sections_frame)
+        self._add_separator()
+
+        self._build_output_section(self._sections_frame)
+        self._add_separator()
+
+        self._build_progress_section(self._sections_frame)
+
+    def _on_sections_configure(self, _event: tk.Event) -> None:
+        self._canvas.configure(scrollregion=self._canvas.bbox(tk.ALL))
+
+    def _on_canvas_configure(self, _event: tk.Event) -> None:
+        # Keep the sections frame as wide as the canvas
+        self._canvas.itemconfig(self._canvas_window, width=_event.width)
+
+    def _add_separator(self) -> None:
+        ttk.Separator(self._sections_frame, orient=tk.HORIZONTAL).pack(
+            fill=tk.X, pady=6,
+        )
+
+    def _make_section_header(
+        self, parent: ttk.Frame, section_id: str, title: str,
+        **pack_kwargs: object,
+    ) -> ttk.Frame:
+        """Build a collapsible section header (▾/▸ toggle + title).
+
+        pack_kwargs are passed to the content frame's pack() call (e.g. fill, expand).
+        Stores the content frame in self._content_{section_id}.
+        """
+        header = ttk.Frame(parent)
+        header.pack(fill=tk.X)
+
+        # Toggle button
+        btn = ttk.Button(
+            header, text="▾", width=2,
+            command=lambda: self._toggle_section(section_id),
+            style="Toolbutton",
+        )
+        btn.pack(side=tk.LEFT, padx=(0, 4))
+        setattr(self, f"_header_btn_{section_id}", btn)
+
+        # Title label
+        lbl = ttk.Label(header, text=title, font=("TkDefaultFont", 10, "bold"))
+        lbl.pack(side=tk.LEFT)
+
+        # Content container (packed below header, hidden when collapsed)
+        content = ttk.Frame(parent, padding=8)
+        default_kwargs = {"fill": tk.X, "ipady": 4}
+        default_kwargs.update(pack_kwargs)
+        self._section_pack[section_id] = default_kwargs
+        content.pack(**default_kwargs)
+        setattr(self, f"_content_{section_id}", content)
+
+        return content
+
+    def _toggle_section(self, section_id: str) -> None:
+        """Expand or collapse a section."""
+        self._section_collapsed[section_id] = not self._section_collapsed[section_id]
+        collapsed = self._section_collapsed[section_id]
+        content: ttk.Frame = getattr(self, f"_content_{section_id}")
+        btn: ttk.Button = getattr(self, f"_header_btn_{section_id}")
+        btn.configure(text="▸" if collapsed else "▾")
+        if collapsed:
+            content.pack_forget()
+        else:
+            content.pack(**self._section_pack[section_id])
+        # Update scroll region after layout changes
+        self._canvas.after_idle(
+            lambda: self._canvas.configure(
+                scrollregion=self._canvas.bbox(tk.ALL),
+            )
+        )
 
     def _build_fetch_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="0. 在线获取（可选）", padding=8)
-        frame.pack(fill=tk.X)
+        frame = self._make_section_header(parent, "fetch", "0. 在线获取（可选）")
 
         ttk.Label(frame, text="SSID:").grid(row=0, column=0, sticky=tk.W, padx=4, pady=2)
         self._ssid_entry = ttk.Entry(frame, textvariable=self._ssid_var, width=24)
@@ -145,32 +248,30 @@ class BookmarkApp(tk.Tk):
         frame.columnconfigure(3, weight=1)
 
     def _build_file_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="1. 选择文件", padding=8)
-        frame.pack(fill=tk.X)
+        frame = self._make_section_header(parent, "file", "1. 选择文件")
 
         # Source (TXT/MD)
         ttk.Label(frame, text="书签源:").grid(row=0, column=0, sticky=tk.W, padx=4, pady=2)
         ttk.Entry(frame, textvariable=self._source_path).grid(
-            row=0, column=1, sticky=tk.EW, padx=4
+            row=0, column=1, sticky=tk.EW, padx=4,
         )
         ttk.Button(frame, text="浏览…", command=self._browse_source).grid(
-            row=0, column=2, padx=4
+            row=0, column=2, padx=4,
         )
 
         # PDF
         ttk.Label(frame, text="PDF:").grid(row=1, column=0, sticky=tk.W, padx=4, pady=2)
         ttk.Entry(frame, textvariable=self._pdf_path).grid(
-            row=1, column=1, sticky=tk.EW, padx=4
+            row=1, column=1, sticky=tk.EW, padx=4,
         )
         ttk.Button(frame, text="浏览…", command=self._browse_pdf).grid(
-            row=1, column=2, padx=4
+            row=1, column=2, padx=4,
         )
 
         frame.columnconfigure(1, weight=1)
 
     def _build_text_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="2. 书签文本（可编辑）", padding=8)
-        frame.pack(fill=tk.X)
+        frame = self._make_section_header(parent, "text", "2. 书签文本（可编辑）")
 
         ttk.Label(
             frame,
@@ -230,8 +331,7 @@ class BookmarkApp(tk.Tk):
         frame.columnconfigure(0, weight=1)
 
     def _build_rule_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="3. 解析规则", padding=8)
-        frame.pack(fill=tk.X)
+        frame = self._make_section_header(parent, "rule", "3. 解析规则")
 
         # Template selector
         ttk.Label(frame, text="模板:").grid(row=0, column=0, sticky=tk.W, padx=4, pady=2)
@@ -260,7 +360,7 @@ class BookmarkApp(tk.Tk):
         # Custom regex
         ttk.Label(frame, text="自定义正则:").grid(row=2, column=0, sticky=tk.W, padx=4, pady=2)
         ttk.Entry(frame, textvariable=self._custom_regex).grid(
-            row=2, column=1, columnspan=3, sticky=tk.EW, padx=4
+            row=2, column=1, columnspan=3, sticky=tk.EW, padx=4,
         )
         ttk.Label(
             frame,
@@ -277,8 +377,9 @@ class BookmarkApp(tk.Tk):
         frame.columnconfigure(3, weight=1)
 
     def _build_preview_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="4. 预览", padding=8)
-        frame.pack(fill=tk.BOTH, expand=True)
+        frame = self._make_section_header(
+            parent, "preview", "4. 预览", fill=tk.BOTH, expand=True,
+        )
 
         # Treeview
         cols = ("title", "page")
@@ -296,13 +397,14 @@ class BookmarkApp(tk.Tk):
         self._tree.configure(yscrollcommand=scroll.set)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Status bar
-        self._status_label = ttk.Label(parent, textvariable=self._status_text, anchor=tk.W)
+        # Status bar (below the section, not inside it)
+        self._status_label = ttk.Label(
+            parent, textvariable=self._status_text, anchor=tk.W,
+        )
         self._status_label.pack(fill=tk.X, padx=4, pady=(2, 0))
 
     def _build_output_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="5. 输出选项", padding=8)
-        frame.pack(fill=tk.X)
+        frame = self._make_section_header(parent, "output", "5. 输出选项")
 
         # Output mode
         ttk.Radiobutton(
@@ -329,8 +431,9 @@ class BookmarkApp(tk.Tk):
         frame.columnconfigure(2, weight=1)
 
     def _build_progress_section(self, parent: ttk.Frame) -> None:
-        frame = ttk.LabelFrame(parent, text="6. 进度与日志", padding=8)
-        frame.pack(fill=tk.BOTH)
+        frame = self._make_section_header(
+            parent, "progress", "6. 进度与日志", fill=tk.BOTH,
+        )
 
         # Progress bar
         self._progress = ttk.Progressbar(frame, mode="determinate", maximum=100)

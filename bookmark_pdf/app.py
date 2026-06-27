@@ -79,6 +79,9 @@ class BookmarkApp(tk.Tk):
         self._pending_pdf_path: Path | None = None
         self._pending_out_path: Path | None = None
 
+        # Output path display (实时显示目标路径)
+        self._out_path_var = tk.StringVar(value="（未选择 PDF）")
+
         # Build UI
         self._build_layout()
 
@@ -355,7 +358,9 @@ class BookmarkApp(tk.Tk):
         frame = ttk.LabelFrame(sub, text="5. 输出选项", padding=8)
         frame.pack(fill=tk.X)
 
-        # Output mode
+        # Output mode — bind trace to update the displayed output path
+        self._output_mode.trace_add("write", lambda *_: self._update_out_path_var())
+        self._pdf_path.trace_add("write", lambda *_: self._update_out_path_var())
         ttk.Radiobutton(
             frame, text="保存为新文件（默认）", variable=self._output_mode, value="new",
         ).grid(row=0, column=0, sticky=tk.W, padx=4)
@@ -363,19 +368,26 @@ class BookmarkApp(tk.Tk):
             frame, text="原地覆盖原 PDF", variable=self._output_mode, value="overwrite",
         ).grid(row=0, column=1, sticky=tk.W, padx=4)
 
+        # Output path display
+        self._out_path_label = ttk.Label(
+            frame, textvariable=self._out_path_var,
+            foreground="#444", font=("TkDefaultFont", 9),
+        )
+        self._out_path_label.grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=8, pady=(0, 4))
+
         # Page offset
         ttk.Checkbutton(
             frame,
             text="页码 -1（TXT/MD 1-based → PDF 0-based）",
             variable=self._page_offset,
             onvalue=-1, offvalue=0,
-        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=4, pady=2)
+        ).grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=4, pady=2)
 
         # Action button
         self._run_btn = ttk.Button(
             frame, text="⚙ 执行挂载", command=self._do_mount, state=tk.DISABLED,
         )
-        self._run_btn.grid(row=0, column=2, rowspan=2, padx=12, ipadx=10, ipady=4)
+        self._run_btn.grid(row=0, column=2, rowspan=3, padx=12, ipadx=10, ipady=4)
 
         frame.columnconfigure(2, weight=1)
 
@@ -422,6 +434,20 @@ class BookmarkApp(tk.Tk):
         )
         if path:
             self._pdf_path.set(path)
+            self._update_out_path_var()
+
+    def _update_out_path_var(self) -> None:
+        """Refresh the displayed output path whenever PDF or mode changes."""
+        pdf_str = self._pdf_path.get().strip()
+        if not pdf_str:
+            self._out_path_var.set("（未选择 PDF）")
+            return
+        pdf_path = Path(pdf_str)
+        if self._output_mode.get() == "overwrite":
+            self._out_path_var.set(f"→ {pdf_path}")
+        else:
+            out = pdf_path.with_name(pdf_path.stem + "_bookmarked.pdf")
+            self._out_path_var.set(f"→ {out}")
 
     # ------------------------------------------------------------------
     # Online fetch
@@ -926,6 +952,7 @@ class BookmarkApp(tk.Tk):
         # Persist paths for out-of-range retry
         self._pending_pdf_path = pdf_path
         self._pending_out_path = out_path
+        self._out_path_var.set(f"→ {out_path}")
 
         thread = threading.Thread(
             target=self._mount_worker,
@@ -1061,10 +1088,16 @@ class BookmarkApp(tk.Tk):
         pdf_path = self._pending_pdf_path
         out_path = self._pending_out_path
         if pdf_path is None or out_path is None:
+            messagebox.showwarning("提示", "无挂载路径，请重新执行")
             return
 
+        self._out_path_var.set(f"→ {out_path}")
+
         if out_path.exists() and out_path == pdf_path:
-            if not messagebox.askyesno("确认", f"将覆盖原文件:\n{out_path}\n是否继续？"):
+            if not messagebox.askyesno(
+                "确认",
+                f"将覆盖原文件:\n{out_path}\n是否继续？",
+            ):
                 return
 
         self._run_btn.config(state=tk.DISABLED)

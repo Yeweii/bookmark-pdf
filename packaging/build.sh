@@ -89,13 +89,19 @@ esac
 echo ""
 echo "→ Creating archive..."
 cd "$PACKAGING_DIR/dist"
+
+# Remove the loose onedir directory (only .app is needed for distribution)
+if [[ "$OS" == "Darwin" && -d "BookmarkPDF" ]]; then
+    rm -rf "BookmarkPDF"
+fi
+
 if [[ "$OS" == "Darwin" ]]; then
     if command -v zip &> /dev/null; then
         zip -qr "BookmarkPDF-$PLATFORM.zip" BookmarkPDF.app/
         echo "  ✓ BookmarkPDF-$PLATFORM.zip"
     fi
 elif [[ "$OS" == "Linux" ]]; then
-    tar -czf "BookmarkPDF-$PLATFORM.tar.gz" BookmarkPDF.app/
+    tar -czf "BookmarkPDF-$PLATFORM.tar.gz" BookmarkPDF/
     echo "  ✓ BookmarkPDF-$PLATFORM.tar.gz"
 fi
 

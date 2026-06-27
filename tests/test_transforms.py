@@ -6,6 +6,7 @@ from bookmark_pdf.transforms import (
     cap_pages,
     flatten,
     normalize_pages,
+    rebase_first_page,
     remove_duplicates,
     remove_invalid_pages,
     shift_pages,
@@ -33,6 +34,20 @@ def _pages(nodes: list[BookmarkNode]) -> list[int | None]:
         out.append(n.page)
         out.extend(_pages(n.children))
     return out
+
+
+def _parse(text: str) -> list[BookmarkNode]:
+    return Parser(Parser.BUILTIN_RULES["indent-dot"]).parse(text)
+
+
+def _roundtrip(transform, original_nodes: list[BookmarkNode]) -> None:
+    """Apply ``transform``, serialize+reparse, verify titles unchanged."""
+    text = to_indent_dot(original_nodes)
+    reparsed = _parse(text)
+    final = transform(reparsed)
+    out_text = to_indent_dot(final)
+    final_reparsed = _parse(out_text)
+    assert _titles(final_reparsed) == _titles(final)
 
 
 def _make_tree() -> list[BookmarkNode]:
@@ -343,25 +358,62 @@ class TestFlatten:
 class TestRoundTrip:
     """Most transforms preserve structure when serialized + reparsed."""
 
-    def _parse(self, text: str) -> list[BookmarkNode]:
-        return Parser(Parser.BUILTIN_RULES["indent-dot"]).parse(text)
-
-    def _roundtrip(self, transform, original_nodes) -> None:
-        text = to_indent_dot(original_nodes)
-        reparsed = self._parse(text)
-        final = transform(reparsed)
-        out_text = to_indent_dot(final)
-        final_reparsed = self._parse(out_text)
-        assert _titles(final_reparsed) == _titles(final)
-
     def test_round_trip_shift(self):
         nodes = _make_tree()
-        self._roundtrip(lambda n: shift_pages(n, 5), nodes)
+        _roundtrip(lambda n: shift_pages(n, 5), nodes)
 
     def test_round_trip_trim(self):
         nodes = _make_tree()
-        self._roundtrip(trim_titles, nodes)
+        _roundtrip(trim_titles, nodes)
 
     def test_round_trip_remove_invalid(self):
         nodes = _make_tree()
-        self._roundtrip(remove_invalid_pages, nodes)
+        _roundtrip(remove_invalid_pages, nodes)
+
+
+class TestRebaseFirstPage:
+    """Tests for rebase_first_page."""
+
+    def test_rebase_basic(self):
+        # First page 1 → target 5, offset=+4 applied to all non-None
+        nodes = [
+            BookmarkNode("A", page=1, line_no=1),
+            BookmarkNode("B", page=3, line_no=2),
+            BookmarkNode("C", page=10, line_no=3),
+        ]
+        result = rebase_first_page(nodes, target_first=5)
+        assert _pages(result) == [5, 7, 14]
+
+    def test_rebase_first_none_in_children(self):
+        # First non-None page is inside children; rebase from there
+        nodes = [
+            BookmarkNode("A", page=None, line_no=1, children=[
+                BookmarkNode("A1", page=3, line_no=2),
+                BookmarkNode("A2", page=7, line_no=3),
+            ]),
+        ]
+        result = rebase_first_page(nodes, target_first=1)
+        # offset = 1 - 3 = -2, applied to A1 and A2
+        assert _pages(result[0].children) == [1, 5]
+        assert result[0].page is None  # A stays None
+
+    def test_rebase_all_none(self):
+        nodes = [
+            BookmarkNode("A", page=None, line_no=1),
+            BookmarkNode("B", page=None, line_no=2),
+        ]
+        result = rebase_first_page(nodes, target_first=5)
+        assert _pages(result) == [None, None]
+
+    def test_rebase_does_not_mutate_input(self):
+        nodes = [
+            BookmarkNode("A", page=1, line_no=1),
+            BookmarkNode("B", page=5, line_no=2),
+        ]
+        original = _pages(nodes)
+        rebase_first_page(nodes, target_first=10)
+        assert _pages(nodes) == original
+
+    def test_round_trip_rebase(self):
+        nodes = _make_tree()
+        _roundtrip(lambda n: rebase_first_page(n, 99), nodes)

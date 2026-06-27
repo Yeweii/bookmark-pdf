@@ -44,6 +44,33 @@ def normalize_pages(nodes: list[BookmarkNode], start: int = 1) -> list[BookmarkN
     return [walk(n) for n in nodes]
 
 
+def rebase_first_page(nodes: list[BookmarkNode], target_first: int) -> list[BookmarkNode]:
+    """Rebase all page numbers so the first non-None page becomes ``target_first``.
+
+    The offset is computed as ``target_first - first_page`` where ``first_page``
+    is the first non-None page encountered in DFS order. All pages (including
+    None) are shifted by the same offset; None pages stay None.
+    """
+    # Find the first non-None page in DFS order
+    first_page: int | None = None
+
+    def find_first(ns: list[BookmarkNode]) -> None:
+        nonlocal first_page
+        for n in ns:
+            if n.page is not None:
+                first_page = n.page
+                return
+            find_first(n.children)
+
+    find_first(nodes)
+    if first_page is None:
+        # No non-None pages; nothing to rebase
+        return list(nodes)
+
+    offset = target_first - first_page
+    return shift_pages(nodes, offset)
+
+
 def cap_pages(nodes: list[BookmarkNode], max_page: int) -> list[BookmarkNode]:
     """Set page=None for entries with page > max_page. None stays None."""
     def walk(n: BookmarkNode) -> BookmarkNode:

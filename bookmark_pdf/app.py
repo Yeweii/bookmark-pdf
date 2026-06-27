@@ -33,6 +33,7 @@ from bookmark_pdf.transforms import (
     cap_pages,
     flatten,
     normalize_pages,
+    rebase_first_page,
     remove_duplicates,
     remove_invalid_pages,
     shift_pages,
@@ -804,7 +805,7 @@ class BookmarkApp(tk.Tk):
 
         win = tk.Toplevel(self)
         win.title("书签文本工具")
-        win.geometry("380x420")
+        win.geometry("380x450")
         win.transient(self)
         self._tools_window = win
         win.protocol("WM_DELETE_WINDOW", lambda: self._close_tools_window())
@@ -812,6 +813,7 @@ class BookmarkApp(tk.Tk):
         # Selection state
         self._tools_choice = tk.StringVar(value="normalize")
         self._tools_cap_value = tk.IntVar(value=9999)
+        self._tools_rebase_value = tk.IntVar(value=1)
 
         # Page group
         page_frame = ttk.LabelFrame(win, text="页码", padding=8)
@@ -829,6 +831,16 @@ class BookmarkApp(tk.Tk):
         ttk.Spinbox(
             cap_row, from_=1, to=9999, textvariable=self._tools_cap_value, width=6,
         ).pack(side=tk.LEFT, padx=(4, 0))
+        rebase_row = ttk.Frame(page_frame)
+        rebase_row.pack(anchor=tk.W, pady=(4, 0))
+        ttk.Radiobutton(
+            rebase_row, text="首项页码调整为：",
+            variable=self._tools_choice, value="rebase",
+        ).pack(side=tk.LEFT)
+        ttk.Spinbox(
+            rebase_row, from_=1, to=9999, textvariable=self._tools_rebase_value, width=6,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Label(rebase_row, text="  页（后续页同步偏移）").pack(side=tk.LEFT)
 
         # Cleanup group
         clean_frame = ttk.LabelFrame(win, text="清理", padding=8)
@@ -891,6 +903,12 @@ class BookmarkApp(tk.Tk):
                 self._apply_transform(
                     lambda n: cap_pages(n, max_page),
                     label=f"裁剪到最大页 {max_page}",
+                )
+            elif choice == "rebase":
+                target = self._tools_rebase_value.get()
+                self._apply_transform(
+                    lambda n: rebase_first_page(n, target),
+                    label=f"首项页码调整为 {target}",
                 )
             elif choice == "dedup":
                 self._apply_transform(remove_duplicates, label="去除重复")
